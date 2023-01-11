@@ -44,20 +44,33 @@ E.g., you can create an instance with 4GB:
 az container create --memory 4 ...
 ```
 
+## Our Questions
+* When we will learn old assignments passed or not?
+* Does followers can get write request and forward it to the leader?
+* How does initialization works?
+  * Where do we keep current leader information and node information?
+  * Does the number of nodes pre-determined? (Can a new node enter to the already running system?)
+* How does end user communicate with the system? Do we need to implement a command line interface?
+  * Does the leader waits for write input from end-user?
+  * Also does the followers waits for read from end-user?
+  * Do we need threads to wait for inputs while updating logs?
+* Do we need to process the provided dataset immediately when the program starts? Or do we need to wait for input data from user?
+* Does URL shortener need to return only a unique ID? 
+
 ## Report Questions
 
-* Describe the design of your system
-* How does your cluster handle leader crashes?
-   * How long does it take to elect a new leader?
-   * Measure the impact of election timeouts. Investigate what happens when it gets too short / too long.
+* Describe the design of your system -> to do!
+* How does your cluster handle leader crashes? -> raft handles this (new leader election)
+   * How long does it take to elect a new leader? -> depends on timeout and implementation also network
+   * Measure the impact of election timeouts. Investigate what happens when it gets too short / too long. -> too short = too many leader election (even no leader crash), too long = determining crashed leader will be longer and this will increase write latency
 * Analyze the load of your nodes:
-   * How much resources do your nodes use?
-   * Where do inserts create most load?
-   * Do lookups distribute the load evenly among replicas?
-* How many nodes should you use for this system? What are their roles?
-* Measure the latency to generate a new short URL
-   * Analyze where your system spends time during this operation
-* Measure the lookup latency to get the URL from a short id
-* How does your system scale?
-   * Measure the latency with increased data inserted, e.g., in 10% increments of inserted short URLs
-   * Measure the system performance with more nodes
+   * How much resources do your nodes use? -> will see
+   * Where do inserts create most load? -> leader node (writes goes from leader)
+   * Do lookups distribute the load evenly among replicas? -> yes
+* How many nodes should you use for this system? What are their roles? -> leader and multiple followers
+* Measure the latency to generate a new short URL -> will see
+   * Analyze where your system spends time during this operation -> waiting ack from followers takes most time.
+* Measure the lookup latency to get the URL from a short id -> directly read from map.
+* How does your system scale? -> new node learns logs from others
+   * Measure the latency with increased data inserted, e.g., in 10% increments of inserted short URLs -> should increase since we wait for ack's from followers
+   * Measure the system performance with more nodes -> will se
