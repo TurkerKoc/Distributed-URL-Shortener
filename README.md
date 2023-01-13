@@ -1,3 +1,11 @@
+``` bash
+mkdir -p cmake-build-debug
+cd cmake-build-debug
+cmake -DOPENSSL_ROOT_DIR=/opt/homebrew/opt/openssl@3 ..
+make
+```
+
+
 # Project: URL shortener
 
 The goal of this project is to implement the storage backend for a transactional URL shortener service (c.f. [bit.ly](https://bit.ly)).

@@ -36,12 +36,12 @@ private:
     //TODO add last_election_time
     //TODO add election_timout
     //TODO add heartbeat_timout
-    std::unordered_map<string, string> urlMap; //short URL -> long URL and long to short
-    std::vector<std::pair<string, int>> log; //{{msg, termNum}, ...} -> msg = long url
+    std::unordered_map <string, string> urlMap; //short URL -> long URL and long to short
+    std::vector <std::pair<string, int>> log; //{{msg, termNum}, ...} -> msg = long url
     std::unordered_map<string, int> sentLength;
     std::unordered_map<string, int> ackedLength;
     std::unique_ptr <Server> server;
-    std::vector<RaftNode> nodes;
+    std::vector <RaftNode> nodes;
 
     // Helper function to become a candidate and start a new election
     void startElection();
@@ -59,7 +59,7 @@ private:
                        RequestVoteResponse *res);
 
 public:
-    RaftNode(std::string id, std::vector<std::string> nodes_info);
+    RaftNode(std::string id, std::vector <std::string> nodes_info);
 
     // Function to start the Raft node
     void start();
@@ -68,7 +68,7 @@ public:
     void stop();
 };
 
-RaftNode::RaftNode(std::string id, std::vector<std::string> nodes_info) {
+RaftNode::RaftNode(std::string id, std::vector <std::string> nodes_info) {
     this->currentTerm = 0;
     this->votedFor = "";
     this->commitLength = 0;
@@ -76,7 +76,7 @@ RaftNode::RaftNode(std::string id, std::vector<std::string> nodes_info) {
     this->currentLeader = "";
     this->id = id;
 
-    for (auto& curId : nodes_info) {
+    for (auto &curId: nodes_info) {
         if (curId == this->id) {
             nodes.emplace_back(*this);
         } else {
@@ -106,6 +106,7 @@ void RaftNode::checkLeaderElection() {
         std::this_thread::sleep_for(std::chrono::seconds(ELECTION_TIMEOUT));
     }
 }
+
 void RaftNode::start() {
     // Start the leader election thread
     leaderElectionThread = std::make_unique<std::thread>(&RaftNode::checkLeaderElection, this);
@@ -127,7 +128,7 @@ void RaftNode::startElection() {
     int lastTerm = 0;
 
 
-    if(log.size() > 0) {
+    if (log.size() > 0) {
         lastTerm = log[log.size() - 1].second;
     }
 
@@ -141,12 +142,12 @@ void RaftNode::startElection() {
     //TODO: observe election timeout behaviour whether code waits in ok()?
 
     // Send RequestVote RPCs to all other nodes
-    for (auto& node : nodes) {
+    for (auto &node: nodes) {
         if (node.id == this->id) continue;
 
         RequestVoteResponse res;
         if (node.RequestVote(req, &res).ok()) {
-            if(currentRole == CANDIDATE && res.term() == currentTerm && res.granted()) {
+            if (currentRole == CANDIDATE && res.term() == currentTerm && res.granted()) {
                 votesReceived++;
                 // If a majority of nodes vote for this node, become leader
                 if (votesReceived > nodes.size() / 2) {
@@ -154,7 +155,7 @@ void RaftNode::startElection() {
                     currentLeader = id;
 
                     // Initialize sentLength and ackedLength for each node
-                    for (auto& node : nodes) {
+                    for (auto &node: nodes) {
                         if (node.id == this->id) continue;
                         sentLength[node.id] = log.size();
                         ackedLength[node.id] = 0;
@@ -162,8 +163,7 @@ void RaftNode::startElection() {
                     }
                     break; //we obtained majority no need to continue (quorum)
                 }
-            }
-            else if (res.term() > currentTerm) { //some other node has larger term this node cant be a leader
+            } else if (res.term() > currentTerm) { //some other node has larger term this node cant be a leader
                 currentTerm = res.term();
                 currentRole = FOLLOWER;
                 votedFor = "";
@@ -184,7 +184,7 @@ void RaftNode::updateState() {
         }
     } else if (currentRole == LEADER) {
         // Send AppendEntries RPCs to all other nodes
-        for (auto& node : nodes) {
+        for (auto &node: nodes) {
             if (node.id == this->id) continue;
 
             AppendEntriesRequest req;
@@ -206,8 +206,8 @@ void RaftNode::updateState() {
     }
 }
 
-Status RaftNode::AppendEntries(ServerContext* context, const AppendEntriesRequest* req,
-                               AppendEntriesResponse* res) {
+Status RaftNode::AppendEntries(ServerContext *context, const AppendEntriesRequest *req,
+                               AppendEntriesResponse *res) {
     if (req->term() < currentTerm) {
         // Send an error response, since this node's term is more up-to-date
         res->set_success(false);
@@ -246,8 +246,8 @@ Status RaftNode::AppendEntries(ServerContext* context, const AppendEntriesReques
 }
 
 //voting on a new leader
-Status RaftNode::RequestVote(ServerContext* context, const RequestVoteRequest* req,
-                             RequestVoteResponse* res) {
+Status RaftNode::RequestVote(ServerContext *context, const RequestVoteRequest *req,
+                             RequestVoteResponse *res) {
 
     if (req->candidate_term() > currentTerm) {
         // Update the node's term and step down
@@ -258,23 +258,22 @@ Status RaftNode::RequestVote(ServerContext* context, const RequestVoteRequest* r
 
     int lastTerm = 0;
 
-    if(log.size() > 0) {
+    if (log.size() > 0) {
         lastTerm = log[log.size() - 1].second;
     }
 
     //compare log and candidates log
-    bool logOk = (req->candidate_log_term > lastTerm) || (req->candidate_log_term == lastTerm && req->candidate_log_length >= log.size());
+    bool logOk = (req->candidate_log_term > lastTerm) ||
+                 (req->candidate_log_term == lastTerm && req->candidate_log_length >= log.size());
 
 
     //not outdated term and we have out dated log and we didn't vote some other node
-    if(req->candidate_log_term == currentTerm && logOk && (votedFor == "" || votedFor == req->candidate_id))
-    {
+    if (req->candidate_log_term == currentTerm && logOk && (votedFor == "" || votedFor == req->candidate_id)) {
         votedFor = req->candidate_id;
         res->set_voter_id(this->id); //voter id
         res->set_term(this->currentTerm);
         res->set_granted(true);
-    }
-    else { //current term is larger than candidate term or candidate log not up to date or we already voted for some other node
+    } else { //current term is larger than candidate term or candidate log not up to date or we already voted for some other node
         res->set_voter_id(this->id); //voter id
         res->set_term(this->currentTerm);
         res->set_granted(false);
