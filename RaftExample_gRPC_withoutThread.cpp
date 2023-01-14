@@ -1,10 +1,12 @@
 // 3/9 DONE IN DS SLIDES RAFT IMPLEMENTATION
 
 /*
- * 1) APPEND ENTRIES grpc olmadan implement
- * 2) Receiving msg from client kismi grpc yaz
- * 3) Commit log entries for leader implementation
+ * 1) APPEND ENTRIES grpc olmadan implement             +
+ * 2) Receiving msg from client kismi grpc (4/9)
+ * 3) Commit log entries for leader implementation      +
  * 4) grpc ve proto hakkinda arastirma
+ * 5) deliver message to application yazilcak (disk)
+ *
  */
 #include <iostream>
 #include <vector>
@@ -12,6 +14,9 @@
 #include <grpcpp/ext/proto_server_reflection_plugin.h>
 #include <unistd.h>
 #include <unordered_map>
+#include <algorithm>
+
+#define ELECTION_TIMEOUT 10
 
 using grpc::Server;
 using grpc::ServerBuilder;
@@ -47,7 +52,7 @@ private:
     std::unordered_map<string, int> sentLength;
     std::unordered_map<string, int> ackedLength;
     std::unique_ptr <Server> server;
-    std::vector<RaftNode> nodes;
+    std::vector <RaftNode> nodes;
 
     // Helper function to become a candidate and start a new election
     void startElection();
@@ -105,7 +110,7 @@ bool RaftNode::isLeaderResponsive() {
     return !(time(nullptr) - last_heartbeat_time > election_timeout);
 }
 
-void RaftNode::checkLeaderElection() {
+void RaftNode::periodicCheck() {
     while (true) {
         // Check if the leader is still responsive
         updateState();
@@ -115,7 +120,7 @@ void RaftNode::checkLeaderElection() {
 
 void RaftNode::start() {
     // Start the leader election thread
-    leaderElectionThread = std::make_unique<std::thread>(&RaftNode::checkLeaderElection, this);
+    leaderElectionThread = std::make_unique<std::thread>(&RaftNode::periodicCheck, this);
 
     // Wait for the server to shutdown.
     server->Wait();
@@ -127,11 +132,12 @@ void RaftNode::stop() {
 
 void RaftNode::replicateLog(std::string leaderId, std::string followerId) {
     int prefixLen = sentLength[followerId]; //msg's we think followers already has
-    std::vector<std::pair<string, int>> suffix = {log.begin() + prefixLen, log.end()}; //logs after prefix (followers dont have)
+    std::vector <std::pair<string, int>> suffix = {log.begin() + prefixLen,
+                                                   log.end()}; //logs after prefix (followers dont have)
 
     int prefixTerm = 0;
-    if(prefixLen > 0) {
-        prefixTerm = log[prefixLen-1].second;
+    if (prefixLen > 0) {
+        prefixTerm = log[prefixLen - 1].second;
     }
 
     AddLogRequest req;
@@ -155,26 +161,52 @@ void RaftNode::replicateLog(std::string leaderId, std::string followerId) {
     int ack = res.ack();
     bool success = res.success();
 
-    if(term == currentTerm && currentRole == leaderId) {
-        if(success && ack >= ackedLength[follower]) { //follower acked the sent log
+    if (term == currentTerm && currentRole == leaderId) {
+        if (success && ack >= ackedLength[follower]) { //follower acked the sent log
             sentLength[follower] = ack;
             ackedLength[follower] = ack;
-            //TODO call commit log entries
-        }
-        else if(sentLength[follower] > 0) { //follower is not sync try smaller log as a leader
+            commitLogEntries();
+        } else if (sentLength[follower] > 0) { //follower is not sync try smaller log as a leader
             sentLength[follower]--; //decrement by 1 to find sync part with follower
-            replicateLog(this->id,followerId);
+            replicateLog(this->id, followerId);
         }
-    }
-    else if(term > currentTerm) { //follower has bigger term this node cant be leader any more
+    } else if (term > currentTerm) { //follower has bigger term this node cant be leader any more
         currentTerm = term;
         currentRole = follower;
         votedFor = "";
     }
 }
 
-int getNodeIndex(std::string nodeId) {
-    for (int i = 0 ; i < nodes.size(); i++) {
+//leader committing log entries
+void RaftNode::commitLogEntries() {
+    int minAcks = (nodes.size() + 1) / 2; //quorum
+    int ready = 0; //max acked length log which has quorum
+    for (int i = 1; i <= log.size(); i++) //look acked lengths for each size of log
+    {
+        int matchedAckedNodeCount = 0;
+        for (auto cur: ackedLength) { //traverse acked len of each node
+            if (cur.second >= i) {
+                matchedAckedNodeCount++;
+            }
+        }
+        if (matchedAckedNodeCount >= minAcks) { //is this length obtained quorum on nodes
+            ready = matchedAckedNodeCount; //update max ready
+        } else { //not possible obtain quorum on bigger lengths stop
+            break;
+        }
+    }
+
+    if (ready != 0 && ready > commitLength && log[ready - 1].second == currentTerm) {
+//        for(int i = commitLength; i < ready; i++) {
+//            //TODO deliver log[i].first (msg) to application
+//        }
+        commitLength = ready;
+    }
+}
+
+//getting node index in the node vector from nodeId
+int RaftNode::getNodeIndex(std::string nodeId) {
+    for (int i = 0; i < nodes.size(); i++) {
         if (nodes[i].id = nodeId) {
             return i;
         }
@@ -182,16 +214,15 @@ int getNodeIndex(std::string nodeId) {
     return -1;
 }
 
-//followers receiving messages
+//followers receiving messages and appending new logs
 Status RaftNode::AddLog(ServerContext *context, const AddLogRequest *req,
-                               AddLogResponse *res) {
+                        AddLogResponse *res) {
     std::string leaderId = req->leader_id();
     int term = req->term();
     int prefixLen = req->prefix_len();
     int prefixTerm = req->prefix_term();
     int leaderCommit = req->commit_length();
-    std::vector<std::pair<string, int>> suffix = req->suffix();
-
+    std::vector <std::pair<string, int>> suffix = req->suffix();
 
 
     if (term > currentTerm) {
@@ -199,26 +230,25 @@ Status RaftNode::AddLog(ServerContext *context, const AddLogRequest *req,
         votedFor = "";
         //cancel election timer ?
     }
-    if(term = currentTerm) {
+    if (term = currentTerm) {
         currentRole = FOLLOWER;
         currentLeader = leaderId;
     }
 
     //compare log and candidates log
-    bool logOk = ((this->log).size() >= prefixLen) && (prefixLen == 0 || log[prefixLen-1].second = prefixTerm);
+    bool logOk = ((this->log).size() >= prefixLen) && (prefixLen == 0 || log[prefixLen - 1].second = prefixTerm);
 
     res->set_follower(this->id);
     res->set_term(currentTerm);
 
     //follower updated log
-    if(term == currentTerm && logOk) {
+    if (term == currentTerm && logOk) {
         appendEntries(prefixLen, leaderCommit, suffix);
         int ack = prefixLen + suffix.size(); //update prefix
 
         res->set_ack(ack);
         res->set_success(true);
-    }
-    else { //follower is not sync with previous entries or leader is no longer current leader
+    } else { //follower is not sync with previous entries or leader is no longer current leader
         res->set_ack(0);
         res->set_success(false);
     }
@@ -226,7 +256,7 @@ Status RaftNode::AddLog(ServerContext *context, const AddLogRequest *req,
     return Status::OK;
 }
 
-
+//start election to become leader
 void RaftNode::startElection() {
     currentTerm++;
     currentRole = CANDIDATE;
@@ -288,7 +318,7 @@ void RaftNode::startElection() {
 
 
 
-
+//periodic check for each node
 void RaftNode::updateState() {
     if (currentRole == FOLLOWER) {
         if (!isLeaderResponsive()) {
@@ -303,28 +333,36 @@ void RaftNode::updateState() {
         for (auto &node: nodes) {
             if (node.id == this->id) continue;
             replicateLog(this->id, node.id);
-//
-//            AppendEntriesRequest req;
-//            AppendEntriesResponse res;
-//            req.set_term(currentTerm);
-//            req.set_leader_id(id);
-//            // Fill in the req with sentLength, log entries, etc
-//            if (node.AppendEntries(req, &res).ok()) {
-//                if (res.success()) {
-//                    // Update ackedLength and sentLength for this node
-//                    ackedLength[node.id] = sentLength[node.id] - 1;
-//                    sentLength[node.id] = ackedLength[node.id] + 1;
-//                } else {
-//                    // Decrement sentLength for this node and try again
-//                    sentLength[node.id]--;
-//                }
-//            }
         }
     }
 }
 
-void RaftNode::appendEntries(int prefixLen, int leaderCommit, std::vector<std::pair<string, int>> suffix) {
+//updating followers logs
+void RaftNode::appendEntries(int prefixLen, int leaderCommit, std::vector <std::pair<std::string, int>> suffix) {
     //TODO implement without grpc
+    if (suffix.size() > 0 &&
+        (this->log).size() > prefixLen) { //you may have some redundant log from prev leader, delete them
+        int index = min((this->log).size(), prefixLen + suffix.size()) - 1;
+        if (log[index].second != suffix[index - prefixLen].second) {
+            log = {log.begin(), log.begin() + prefixLen - 1}; //truncate log to prefix
+        } //truncated and cutted of inconsistent logs
+
+        //do we have new logs to add
+        if (prefixLen + suffix.size() > log.size()) {
+            log.insert(log.end(), suffix.begin(), suffix.end()); //add all suffix to log from back
+        }
+
+        if (leaderCommit > commitLength) {
+//            for(int i = commitLength; i < leaderCommit; i++) {
+//                //TODO commit log[i].first (msg) to disk (client)
+//            }
+            commitLength = leaderCommit;
+        }
+
+    }
+
+
+
 //    if (req->term() < currentTerm) {
 //        // Send an error response, since this node's term is more up-to-date
 //        res->set_success(false);
