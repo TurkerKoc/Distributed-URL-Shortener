@@ -1,5 +1,11 @@
 // 3/9 DONE IN DS SLIDES RAFT IMPLEMENTATION
 
+/*
+ * 1) APPEND ENTRIES grpc olmadan implement
+ * 2) Receiving msg from client kismi grpc yaz
+ * 3) Commit log entries for leader implementation
+ * 4) grpc ve proto hakkinda arastirma
+ */
 #include <iostream>
 #include <vector>
 #include <grpcpp/grpcpp.h>
@@ -41,7 +47,7 @@ private:
     std::unordered_map<string, int> sentLength;
     std::unordered_map<string, int> ackedLength;
     std::unique_ptr <Server> server;
-    std::vector <RaftNode> nodes;
+    std::vector<RaftNode> nodes;
 
     // Helper function to become a candidate and start a new election
     void startElection();
@@ -119,6 +125,108 @@ void RaftNode::stop() {
     server->Shutdown();
 }
 
+void RaftNode::replicateLog(std::string leaderId, std::string followerId) {
+    int prefixLen = sentLength[followerId]; //msg's we think followers already has
+    std::vector<std::pair<string, int>> suffix = {log.begin() + prefixLen, log.end()}; //logs after prefix (followers dont have)
+
+    int prefixTerm = 0;
+    if(prefixLen > 0) {
+        prefixTerm = log[prefixLen-1].second;
+    }
+
+    AddLogRequest req;
+    req.set_leader_id(this->id); //our id
+    req.set_term(this->currentTerm);
+    req.set_prefix_len(prefixLen);
+    req.set_prefix_term(prefixTerm);
+    req.set_leader_commit(commitLength);
+    req.set_suffix(suffix);
+
+    AddLogResponse res;
+    int nodeIndex = getNodeIndex(followerId);
+    //leader receiving acks
+    if (!nodes[nodeIndex].AddLog(req, &res).ok()) {
+        std::cout << "grpc error" << std::endl:
+        return;
+    }
+
+    std::string follower = res.follower();
+    int term = res.term();
+    int ack = res.ack();
+    bool success = res.success();
+
+    if(term == currentTerm && currentRole == leaderId) {
+        if(success && ack >= ackedLength[follower]) { //follower acked the sent log
+            sentLength[follower] = ack;
+            ackedLength[follower] = ack;
+            //TODO call commit log entries
+        }
+        else if(sentLength[follower] > 0) { //follower is not sync try smaller log as a leader
+            sentLength[follower]--; //decrement by 1 to find sync part with follower
+            replicateLog(this->id,followerId);
+        }
+    }
+    else if(term > currentTerm) { //follower has bigger term this node cant be leader any more
+        currentTerm = term;
+        currentRole = follower;
+        votedFor = "";
+    }
+}
+
+int getNodeIndex(std::string nodeId) {
+    for (int i = 0 ; i < nodes.size(); i++) {
+        if (nodes[i].id = nodeId) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+//followers receiving messages
+Status RaftNode::AddLog(ServerContext *context, const AddLogRequest *req,
+                               AddLogResponse *res) {
+    std::string leaderId = req->leader_id();
+    int term = req->term();
+    int prefixLen = req->prefix_len();
+    int prefixTerm = req->prefix_term();
+    int leaderCommit = req->commit_length();
+    std::vector<std::pair<string, int>> suffix = req->suffix();
+
+
+
+    if (term > currentTerm) {
+        currentTerm = term;
+        votedFor = "";
+        //cancel election timer ?
+    }
+    if(term = currentTerm) {
+        currentRole = FOLLOWER;
+        currentLeader = leaderId;
+    }
+
+    //compare log and candidates log
+    bool logOk = ((this->log).size() >= prefixLen) && (prefixLen == 0 || log[prefixLen-1].second = prefixTerm);
+
+    res->set_follower(this->id);
+    res->set_term(currentTerm);
+
+    //follower updated log
+    if(term == currentTerm && logOk) {
+        appendEntries(prefixLen, leaderCommit, suffix);
+        int ack = prefixLen + suffix.size(); //update prefix
+
+        res->set_ack(ack);
+        res->set_success(true);
+    }
+    else { //follower is not sync with previous entries or leader is no longer current leader
+        res->set_ack(0);
+        res->set_success(false);
+    }
+
+    return Status::OK;
+}
+
+
 void RaftNode::startElection() {
     currentTerm++;
     currentRole = CANDIDATE;
@@ -159,7 +267,7 @@ void RaftNode::startElection() {
                         if (node.id == this->id) continue;
                         sentLength[node.id] = log.size();
                         ackedLength[node.id] = 0;
-                        //TODO Replicate log gRPC
+                        replicateLog(currentLeader, node.id);
                     }
                     break; //we obtained majority no need to continue (quorum)
                 }
@@ -172,6 +280,14 @@ void RaftNode::startElection() {
         }
     }
 }
+
+
+
+
+//TODO add grpc method to receive write request and replicate log again on leader
+
+
+
 
 void RaftNode::updateState() {
     if (currentRole == FOLLOWER) {
@@ -186,63 +302,64 @@ void RaftNode::updateState() {
         // Send AppendEntries RPCs to all other nodes
         for (auto &node: nodes) {
             if (node.id == this->id) continue;
-
-            AppendEntriesRequest req;
-            AppendEntriesResponse res;
-            req.set_term(currentTerm);
-            req.set_leader_id(id);
-            // Fill in the req with sentLength, log entries, etc
-            if (node.AppendEntries(req, &res).ok()) {
-                if (res.success()) {
-                    // Update ackedLength and sentLength for this node
-                    ackedLength[node.id] = sentLength[node.id] - 1;
-                    sentLength[node.id] = ackedLength[node.id] + 1;
-                } else {
-                    // Decrement sentLength for this node and try again
-                    sentLength[node.id]--;
-                }
-            }
+            replicateLog(this->id, node.id);
+//
+//            AppendEntriesRequest req;
+//            AppendEntriesResponse res;
+//            req.set_term(currentTerm);
+//            req.set_leader_id(id);
+//            // Fill in the req with sentLength, log entries, etc
+//            if (node.AppendEntries(req, &res).ok()) {
+//                if (res.success()) {
+//                    // Update ackedLength and sentLength for this node
+//                    ackedLength[node.id] = sentLength[node.id] - 1;
+//                    sentLength[node.id] = ackedLength[node.id] + 1;
+//                } else {
+//                    // Decrement sentLength for this node and try again
+//                    sentLength[node.id]--;
+//                }
+//            }
         }
     }
 }
 
-Status RaftNode::AppendEntries(ServerContext *context, const AppendEntriesRequest *req,
-                               AppendEntriesResponse *res) {
-    if (req->term() < currentTerm) {
-        // Send an error response, since this node's term is more up-to-date
-        res->set_success(false);
-        res->set_term(currentTerm);
-        return Status::OK;
-    }
-
-    // Update the node's term and leader
-    currentTerm = req->term();
-    currentLeader = req->leader_id();
-    currentRole = FOLLOWER;
-    last_heartbeat_time = time(nullptr);
-
-    // If the leader's log is up-to-date
-    if (req->prev_log_index() <= log.size() &&
-        req->prev_log_term() == log[req->prev_log_index()].term) {
-
-        // Delete any conflicting entries
-        log.erase(log.begin() + req->prev_log_index() + 1, log.end());
-
-        // Append new entries
-        for (int i = 0; i < req->entries_size(); i++) {
-            log.push_back(req->entries(i));
-        }
-
-        // Update the commit index
-        commitIndex = std::min(req->leader_commit(), log.size() - 1);
-        res->set_success(true);
-    } else {
-        // Send an error response, since the leader's log is not up-to-date
-        res->set_success(false);
-    }
-
-    res->set_term(currentTerm);
-    return Status::OK;
+void RaftNode::appendEntries(int prefixLen, int leaderCommit, std::vector<std::pair<string, int>> suffix) {
+    //TODO implement without grpc
+//    if (req->term() < currentTerm) {
+//        // Send an error response, since this node's term is more up-to-date
+//        res->set_success(false);
+//        res->set_term(currentTerm);
+//        return Status::OK;
+//    }
+//
+//    // Update the node's term and leader
+//    currentTerm = req->term();
+//    currentLeader = req->leader_id();
+//    currentRole = FOLLOWER;
+//    last_heartbeat_time = time(nullptr);
+//
+//    // If the leader's log is up-to-date
+//    if (req->prev_log_index() <= log.size() &&
+//        req->prev_log_term() == log[req->prev_log_index()].term) {
+//
+//        // Delete any conflicting entries
+//        log.erase(log.begin() + req->prev_log_index() + 1, log.end());
+//
+//        // Append new entries
+//        for (int i = 0; i < req->entries_size(); i++) {
+//            log.push_back(req->entries(i));
+//        }
+//
+//        // Update the commit index
+//        commitIndex = std::min(req->leader_commit(), log.size() - 1);
+//        res->set_success(true);
+//    } else {
+//        // Send an error response, since the leader's log is not up-to-date
+//        res->set_success(false);
+//    }
+//
+//    res->set_term(currentTerm);
+//    return Status::OK;
 }
 
 //voting on a new leader
