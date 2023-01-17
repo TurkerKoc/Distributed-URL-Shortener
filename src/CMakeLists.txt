@@ -34,6 +34,12 @@ target_link_libraries(main
         PRIVATE
         myproto)
 
+add_executable(raftExample
+        RaftExample_gRPC_withoutThread.cpp
+        )
+target_link_libraries(raftExample
+        PRIVATE
+        myproto)
 #[[
 add_executable(worker
         worker.cpp
