@@ -52,7 +52,7 @@ private:
     std::unordered_map<string, int> sentLength;
     std::unordered_map<string, int> ackedLength;
     std::unique_ptr <Server> server;
-    std::vector <RaftNode> nodes;
+    std::unordered_map<std::string, std::unique_ptr<RaftNode::Stub>> nodes; //id: localhost:1234, Stub: to make a gRPC Call
 
     // Helper function to become a candidate and start a new election
     void startElection();
@@ -88,11 +88,8 @@ RaftNode::RaftNode(std::string id, std::vector <std::string> nodes_info) {
     this->id = id;
 
     for (auto &curId: nodes_info) {
-        if (curId == this->id) {
-            nodes.emplace_back(*this);
-        } else {
-            nodes.emplace_back(RaftNode(curId, nodes_info));
-        }
+            std::shared_ptr<Channel> channel = grpc::CreateChannel(curId, grpc::InsecureChannelCredentials());
+            nodes[id] = RaftNode::NewStub(channel);
     }
 
     ServerBuilder builder;
@@ -149,9 +146,9 @@ void RaftNode::replicateLog(std::string leaderId, std::string followerId) {
     req.set_suffix(suffix);
 
     AddLogResponse res;
-    int nodeIndex = getNodeIndex(followerId);
+//    int nodeIndex = getNodeIndex(followerId);
     //leader receiving acks
-    if (!nodes[nodeIndex].AddLog(req, &res).ok()) {
+    if (!((nodes[followerId]->AddLog(req, &res)).ok())) {
         std::cout << "grpc error" << std::endl:
         return;
     }
@@ -205,14 +202,14 @@ void RaftNode::commitLogEntries() {
 }
 
 //getting node index in the node vector from nodeId
-int RaftNode::getNodeIndex(std::string nodeId) {
-    for (int i = 0; i < nodes.size(); i++) {
-        if (nodes[i].id = nodeId) {
-            return i;
-        }
-    }
-    return -1;
-}
+//int RaftNode::getNodeIndex(std::string nodeId) {
+//    for (int i = 0; i < nodes.size(); i++) {
+//        if (nodes[i].id = nodeId) {
+//            return i;
+//        }
+//    }
+//    return -1;
+//}
 
 //followers receiving messages and appending new logs
 Status RaftNode::AddLog(ServerContext *context, const AddLogRequest *req,
@@ -281,10 +278,10 @@ void RaftNode::startElection() {
 
     // Send RequestVote RPCs to all other nodes
     for (auto &node: nodes) {
-        if (node.id == this->id) continue;
+        if (node.first == this->id) continue;
 
         RequestVoteResponse res;
-        if (node.RequestVote(req, &res).ok()) {
+        if (((node.second)->RequestVote(req, &res)).ok()) {
             if (currentRole == CANDIDATE && res.term() == currentTerm && res.granted()) {
                 votesReceived++;
                 // If a majority of nodes vote for this node, become leader
@@ -294,10 +291,10 @@ void RaftNode::startElection() {
 
                     // Initialize sentLength and ackedLength for each node
                     for (auto &node: nodes) {
-                        if (node.id == this->id) continue;
-                        sentLength[node.id] = log.size();
-                        ackedLength[node.id] = 0;
-                        replicateLog(currentLeader, node.id);
+                        if (node.first == this->id) continue;
+                        sentLength[node.first] = log.size();
+                        ackedLength[node.first] = 0;
+                        replicateLog(currentLeader, node.first);
                     }
                     break; //we obtained majority no need to continue (quorum)
                 }
@@ -331,8 +328,8 @@ void RaftNode::updateState() {
     } else if (currentRole == LEADER) {
         // Send AppendEntries RPCs to all other nodes
         for (auto &node: nodes) {
-            if (node.id == this->id) continue;
-            replicateLog(this->id, node.id);
+            if (node.first == this->id) continue;
+            replicateLog(this->id, node.first);
         }
     }
 }
