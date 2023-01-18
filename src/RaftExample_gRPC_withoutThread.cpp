@@ -2,7 +2,7 @@
 
 /*
  * 1) APPEND ENTRIES grpc olmadan implement             +
- * 2) Receiving msg from client kismi grpc (4/9)
+ * 2) Receiving msg from client kismi grpc (4/9)        +
  * 3) Commit log entries for leader implementation      +
  * 4) grpc ve proto hakkinda arastirma                  +
  * 5) deliver message to application yazilacak (disk)

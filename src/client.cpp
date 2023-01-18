@@ -1,10 +1,14 @@
 // read, write methodunu grpc yazicaz
 // mainde RaftNode objelerini olusturup thread olarak bunlari calistiricaz
 // sonra grpc dinlemeye baslicak ve ne zaman bir istek gelse sirasiyla nodelara yonlendiricez
-// write request RafNodeda hali hazirda leadera forward olacagi icin lider bilgisini buranin tutmasina gerek yok
+// + write request RafNodeda hali hazirda leadera forward olacagi icin lider bilgisini buranin tutmasina gerek yok
 // eger herhangi bir istekte hata alirsak diger nodea istek aticaz
 
 
+//Raft icinde redundant logu silme isleminde urlMap ten silmen lazim -> TODO su var
+
+
+// 5) deliver message to application yazilacak (disk) yapilacak
 
 #include <raft.grpc.pb.h>
 #include <iostream>
