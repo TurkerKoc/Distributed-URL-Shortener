@@ -41,3 +41,27 @@ message AddLogResponse {
   int32 ack = 3;
   bool success = 4;
 }
+
+
+service ClientService {
+  rpc Write (WriteRequest) returns (WriteResponse);
+  rpc Read (ReadRequest) returns (ReadResponse);
+}
+
+message WriteRequest {
+  string long_url = 1;
+}
+
+message WriteResponse {
+  string long_url = 1;
+  string short_url = 2;
+}
+
+message ReadRequest {
+  string url = 1; //can be both short or long url
+}
+
+message ReadResponse {
+  string url = 1; //short or long url
+  string result_url = 2; //long or short url
+}

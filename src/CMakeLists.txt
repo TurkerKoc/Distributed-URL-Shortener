@@ -40,6 +40,13 @@ add_executable(raftExample
 target_link_libraries(raftExample
         PRIVATE
         myproto)
+
+add_executable(client
+        client.cpp
+        )
+target_link_libraries(client
+        PRIVATE
+        myproto)
 #[[
 add_executable(worker
         worker.cpp
