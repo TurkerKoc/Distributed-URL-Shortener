@@ -10,8 +10,6 @@
  */
 #include <iostream>
 #include <vector>
-//#include <grpcpp/grpcpp.h>
-//#include <grpcpp/ext/proto_server_reflection_plugin.h>
 #include <unistd.h>
 #include <unordered_map>
 #include <algorithm>
@@ -20,8 +18,12 @@
 #include "raft.grpc.pb.h"
 #include <memory>
 #include <thread>
+#include <sstream>
+#include <openssl/evp.h>
+#include <chrono>
+#include <iomanip>
 
-#define PERIODIC_CHECK_SECONDS 10
+#define PERIODIC_CHECK_SECONDS 5
 #define UNUSED(expr) do { (void)(expr); } while (0)
 
 using grpc::Server;
@@ -52,6 +54,9 @@ enum NodeState {
     LEADER
 };
 
+const std::string NodeStateStr[] = { "FOLLOWER", "CANDIDATE", "LEADER" };
+
+
 class RaftNode final : public RaftService::Service, public ClientService::Service {
 private:
     std::string id; //ip:port
@@ -66,12 +71,13 @@ private:
     double heartbeat_timout;
     std::unique_ptr<std::thread> periodicCheckThread; //thread that check state for each node periodically
 
-    std::unordered_map <std::string, std::string> urlMap; //short URL -> long URL and long to short
+    std::unordered_map <std::string, std::string> urlMap; //short->long or long->short
     std::vector <std::pair<std::string, int>> log; //{{msg, termNum}, ...} -> msg = long url
     std::unordered_map<std::string, int> sentLength;
     std::unordered_map<std::string, int> ackedLength;
     std::unique_ptr <Server> server;
     std::unordered_map<std::string, std::unique_ptr<RaftService::Stub>> nodes; //id: localhost:1234, Stub: to make a gRPC Call
+    std::unordered_map<std::string, std::unique_ptr<ClientService::Stub>> nodesClientService; //id: localhost:1234, Stub: to make a gRPC Call on Write and Read
 
     // Helper function to become a candidate and start a new election
     void startElection();
@@ -112,6 +118,8 @@ private:
     //UTIL FUNCTIONS
     double getRandomDouble(double fMin, double fMax);
 
+    std::string generateShortUrl(const std::string longUrl);
+
 public:
     RaftNode(std::string id, std::vector <std::string> nodes_info);
 
@@ -130,13 +138,20 @@ RaftNode::RaftNode(std::string id, std::vector <std::string> nodes_info) {
     this->currentLeader = "";
     this->id = id;
 
-    election_timout = getRandomDouble(5.0, 10.0); //election will time out after X seconds.
-    heartbeat_timout = 5.0; //heartbeat timout to check leader unresponsive
+    election_timout = getRandomDouble(10.0, 15.0); //election will time out after X seconds.
+    heartbeat_timout = 10.0; //heartbeat timout to check leader unresponsive
 
     for (auto &curId: nodes_info) {
         auto channel = grpc::CreateChannel(curId, grpc::InsecureChannelCredentials());
         auto stub = RaftService::NewStub(channel);
+        auto stubClientService = ClientService::NewStub(channel);
         nodes.emplace(curId, std::move(stub));
+        nodesClientService.emplace(curId, std::move(stubClientService));
+    }
+
+    std::cout << "Nodes array of " << this->id << ":" << std::endl;
+    for(auto &node : nodes) {
+        std::cout << node.first << std::endl;
     }
 
     ServerBuilder builder;
@@ -225,11 +240,15 @@ void RaftNode::replicateLog(std::string leaderId, std::string followerId) {
     int ack = res.ack();
     bool success = res.success();
 
+    std::cout << "Client response to Add Log" << std::endl;
+
     if (term == currentTerm && currentRole == LEADER) {
         if (success && ack >= ackedLength[follower]) { //follower acked the sent log
             sentLength[follower] = ack;
             ackedLength[follower] = ack;
+            std::cout << "Client acked log -> comitting!" << std::endl;
             commitLogEntries();
+            std::cout << "Comitting done!" << std::endl;
         } else if (sentLength[follower] > 0) { //follower is not sync try smaller log as a leader
             sentLength[follower]--; //decrement by 1 to find sync part with follower
             replicateLog(this->id, followerId);
@@ -243,23 +262,32 @@ void RaftNode::replicateLog(std::string leaderId, std::string followerId) {
 
 //leader committing log entries
 void RaftNode::commitLogEntries() {
-    int minAcks = ((int)nodes.size() + 1) / 2; //quorum
+    int minAcks = ((int)(nodes.size()) + 1) / 2; //quorum
     int ready = 0; //max acked length log which has quorum
-    for (int i = 1; i <= (int)log.size(); i++) //look acked lengths for each size of log
+    for (int i = 1; i <= (int)(log.size()); i++) //look acked lengths for each size of log
     {
         int matchedAckedNodeCount = 0;
         for (auto cur: ackedLength) { //traverse acked len of each node
+            std::cout << "cur.second: " << std::endl;
+            std::cout << "cur.second: " << cur.second << std::endl;
             if (cur.second >= i) {
                 matchedAckedNodeCount++;
             }
         }
         if (matchedAckedNodeCount >= minAcks) { //is this length obtained quorum on nodes
-            ready = matchedAckedNodeCount; //update max ready
+            ready = i; //update max ready
         } else { //not possible obtain quorum on bigger lengths stop
             break;
         }
     }
 
+
+
+    std::cout << "Log size: " << log.size() << std::endl;
+    std::cout << "Ready var: " << ready << std::endl;
+    if(ready != 0)
+        std::cout << "Ready var in log: " << (log[(unsigned long)(ready - 1)].second) << std::endl;
+    std::cout << "if condition: " << (ready != 0 && ready > commitLength && log[(unsigned long)(ready - 1)].second == currentTerm) << std::endl;
     if (ready != 0 && ready > commitLength && log[(unsigned long)(ready - 1)].second == currentTerm) {
 //        for(int i = commitLength; i < ready; i++) {
 //            //TODO deliver log[i].first (msg) to application
@@ -292,12 +320,15 @@ void RaftNode::startElection() {
     last_election_time = time(nullptr); //starting election timer
     //TODO: observe election timeout behaviour whether code waits in ok()?
 
+    std::cout << "Starting eleection for " << std::endl;
     // Send RequestVote RPCs to all other nodes
     for (auto &node: nodes) {
         if (node.first == this->id) continue;
         ClientContext context;
         RequestVoteResponse res;
+        std::cout << "Sending request to " << node.first << std::endl;
         if (((node.second)->RequestVote(&context, req, &res)).ok()) {
+            std::cout << "Response from " << node.first << " -> " << "Term: " << res.term() << " Granted: " << res.granted() << std::endl;
             if (currentRole == CANDIDATE && res.term() == currentTerm && res.granted()) {
                 votesReceived++;
                 // If a majority of nodes vote for this node, become leader
@@ -333,6 +364,7 @@ void RaftNode::startElection() {
 
 //periodic check for each node
 void RaftNode::updateState() {
+    std::cout << "Current State of " << this->id << ": " << NodeStateStr[this->currentRole] << std::endl;
     if (currentRole == FOLLOWER) {
         if (isLeaderUnresponsive()) {
             startElection();
@@ -348,31 +380,43 @@ void RaftNode::updateState() {
             replicateLog(this->id, node.first);
         }
     }
+    std::cout << "Current State of " << this->id << ": " << NodeStateStr[this->currentRole] << std::endl;
 }
 
 //updating followers logs
 void RaftNode::appendEntries(int prefixLen, int leaderCommit, std::vector<pair> suffix) {
+    std::cout << "appendEntries start" << std::endl;
     if ((int)(suffix.size()) > 0 && (int)((this->log).size()) > prefixLen) { //you may have some redundant log from prev leader, delete them
         int index = std::min((int)((this->log).size()), prefixLen + (int)(suffix.size())) - 1;
         if (log[(unsigned long)index].second != suffix[(unsigned long)(index - prefixLen)].second()) {
+            //TODO delete data from urlMap as well.
             log = {log.begin(), log.begin() + prefixLen - 1}; //truncate log to prefix
         } //truncated and cutted of inconsistent logs
+    }
+    //do we have new logs to add
+    if (prefixLen + (int)(suffix.size()) > (int)(log.size())) {
+        //add all suffix to log from back
+        for(auto &p: suffix) {
+            //TODO add urlMap too
+            log.push_back({p.first(), p.second()});
+            std::string urlMapping = p.first(); //longUrl,shortUrl
+            //Parsing on ','
+            std::size_t index = urlMapping.find(','); //index of comma
+            std::string longUrl = urlMapping.substr(0,index);
+            std::string shortUrl = urlMapping.substr(index+1);
 
-        //do we have new logs to add
-        if (prefixLen + (int)(suffix.size()) > (int)(log.size())) {
-            //add all suffix to log from back
-            for(auto &p: suffix) {
-                log.push_back({p.first(), p.second()});
-            }
+            std::cout << "adding log to urlMap" << std::endl;
+
+            urlMap[longUrl] = shortUrl;
+            urlMap[shortUrl] = longUrl;
         }
+    }
 
-        if (leaderCommit > commitLength) {
+    if (leaderCommit > commitLength) {
 //            for(int i = commitLength; i < leaderCommit; i++) {
 //                //TODO commit log[i].first (msg) to disk (client)
 //            }
-            commitLength = leaderCommit;
-        }
-
+        commitLength = leaderCommit;
     }
 }
 
@@ -428,6 +472,7 @@ Status RaftNode::AddLog(ServerContext *context, const AddLogRequest *req,
 //voting on a new leader
 Status RaftNode::RequestVote(ServerContext *context, const RequestVoteRequest *req, RequestVoteResponse *res) {
     UNUSED(context);
+//    std::cout << req->candidate_id() << " wants vote." << std:endl << "Requested term: " << req->candidate_term() << std::endl();
     if (req->candidate_term() > currentTerm) {
         // Update the node's term and step down
         currentTerm = req->candidate_term();
@@ -446,8 +491,13 @@ Status RaftNode::RequestVote(ServerContext *context, const RequestVoteRequest *r
                  (req->candidate_log_term() == lastTerm && req->candidate_log_length() >= (int)(log.size()));
 
 
+    std::cout << "Is log Ok: " << logOk << std::endl;
+    std::cout << "is terms same: " << logOk << std::endl;
+    std::cout << "Is log Ok: " << logOk << std::endl;
+    std::cout << "Can Vote: " << (req->candidate_log_term() == currentTerm && logOk && (votedFor == "" || votedFor == req->candidate_id())) << std::endl;
+
     //not outdated term and we have out dated log and we didn't vote some other node
-    if (req->candidate_log_term() == currentTerm && logOk && (votedFor == "" || votedFor == req->candidate_id())) {
+    if (req->candidate_term() == currentTerm && logOk && (votedFor == "" || votedFor == req->candidate_id())) {
         votedFor = req->candidate_id();
         res->set_voter_id(this->id); //voter id
         res->set_term(this->currentTerm);
@@ -460,17 +510,82 @@ Status RaftNode::RequestVote(ServerContext *context, const RequestVoteRequest *r
     return Status::OK;
 }
 
+
+
+
+
+std::string RaftNode::generateShortUrl(const std::string longUrl) {
+    // Get current timestamp
+    auto timestamp = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+    // Combine timestamp and longURL
+    std::stringstream ss;
+    ss << timestamp << longUrl;
+    // Hash the combined string using SHA-256
+    unsigned char hash[EVP_MAX_MD_SIZE];
+    unsigned int hash_len;
+    EVP_MD_CTX* mdctx = EVP_MD_CTX_new();
+    EVP_DigestInit(mdctx, EVP_sha256());
+    EVP_DigestUpdate(mdctx, ss.str().c_str(), ss.str().size());
+    EVP_DigestFinal(mdctx, hash, &hash_len);
+    EVP_MD_CTX_free(mdctx);
+    // Convert the hash to a hex string
+    std::stringstream hashStream;
+    hashStream << std::hex << std::setfill('0');
+    for (unsigned int i = 0; i < hash_len; i++) {
+        hashStream << std::setw(2) << (int)hash[i];
+    }
+    // Take the first 6 characters of the hex string as the short URL
+    return hashStream.str().substr(0, 6);
+}
+
+
+
+
 // Service implementation for the Write RPC
 Status RaftNode::Write(ServerContext *context, const WriteRequest *req, WriteResponse *res) {
     UNUSED(context);
-    std::string longUrl = req->long_url();
+    if(currentRole == LEADER) { //do write request
+        std::string longUrl = req->long_url();
+        std::string shortUrl = "";
 
-    //TODO calculate short url
+        if(urlMap.find(longUrl) != urlMap.end()) {
+            shortUrl = urlMap[longUrl];
+        }
+        else {
+            shortUrl = generateShortUrl(longUrl);
+            urlMap[longUrl] = shortUrl;
+            urlMap[shortUrl] = longUrl;
 
-    res->set_long_url(longUrl);
-    res->set_short_url(longUrl);
+            log.push_back({longUrl+","+shortUrl, currentTerm}); //add curren mappint to log
+        }
 
-    return Status::OK;
+        res->set_long_url(longUrl);
+        res->set_short_url(shortUrl);
+
+        return Status::OK;
+    }
+    else if(currentRole == FOLLOWER) { //forward request to leader
+        WriteRequest reqLeader;
+        reqLeader.set_long_url(req->long_url());
+
+        WriteResponse resLeader;
+        ClientContext contextLeader;
+
+        Status status = (nodesClientService[currentLeader])->Write(&contextLeader, reqLeader, &resLeader); //leader gRPC call
+        if(status.ok()) { //leader returned result
+            res->set_long_url(resLeader.long_url());
+            res->set_short_url(resLeader.short_url());
+            return Status::OK;
+        }
+        else {
+            return grpc::Status(grpc::StatusCode::NOT_FOUND, "Leader response error!");
+        }
+    }
+    else if(currentRole == CANDIDATE) {
+        //TODO leader not known we need to fail write request
+        return grpc::Status(grpc::StatusCode::NOT_FOUND, "Unknown Leader");
+    }
+    return grpc::Status(grpc::StatusCode::NOT_FOUND, "Unknown Error");
 }
 
 // Service implementation for the RequestVote RPC
@@ -479,31 +594,35 @@ Status RaftNode::Read(ServerContext *context, const ReadRequest *req, ReadRespon
     UNUSED(context);
     std::string url = req->url();
 
-    //TODO calculate short url
+    if(urlMap.find(url) != urlMap.end()) {
+        res->set_url(url);
+        res->set_result_url(urlMap[url]);
+        return Status::OK;
+    }
 
-    res->set_url(url);
-    res->set_result_url(url);
-
-    return Status::OK;
+    return grpc::Status(grpc::StatusCode::NOT_FOUND, "URL Not Found!");
 }
 
 
 
-int main() {
+int main(int argc, char** argv) {
+    if (argc < 2) {
+        return 1;
+    }
+    int index = std::stoi(argv[1]);
     std::vector<std::string> nodes_info = {
             "127.0.0.1:50051",
             "127.0.0.1:50052",
-            "127.0.0.1:50053"
+            "127.0.0.1:50053",
+            "127.0.0.1:50054"
     };
 
 
-    RaftNode node(nodes_info[0], nodes_info);
-//    RaftNode node1(nodes_info[1], nodes_info);
+    RaftNode node(nodes_info[(unsigned long)index], nodes_info);
 //    RaftNode node2(nodes_info[2], nodes_info);
 
     // Start the Raft node
     node.start();
-//    node1.start();
 //    node2.start();
 
     return 0;

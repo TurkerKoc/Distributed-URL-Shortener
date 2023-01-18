@@ -5,7 +5,8 @@ set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -Wextra -Wconversion -Werror -fsan
 # Dependencies
 #
 find_package(Threads)
-
+find_package(OpenSSL REQUIRED)
+include_directories(${OPENSSL_INCLUDE_DIR})
 #
 # Sources
 #
@@ -39,7 +40,8 @@ add_executable(raftExample
         )
 target_link_libraries(raftExample
         PRIVATE
-        myproto)
+        myproto
+        ${OPENSSL_LIBRARIES})
 
 add_executable(client
         client.cpp

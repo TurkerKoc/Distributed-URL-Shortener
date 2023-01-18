@@ -1,3 +1,11 @@
+// read, write methodunu grpc yazicaz
+// mainde RaftNode objelerini olusturup thread olarak bunlari calistiricaz
+// sonra grpc dinlemeye baslicak ve ne zaman bir istek gelse sirasiyla nodelara yonlendiricez
+// write request RafNodeda hali hazirda leadera forward olacagi icin lider bilgisini buranin tutmasina gerek yok
+// eger herhangi bir istekte hata alirsak diger nodea istek aticaz
+
+
+
 #include <raft.grpc.pb.h>
 #include <iostream>
 #include <string>
@@ -30,7 +38,7 @@ public:
             std::cout << "Long URL: " << response.long_url() << std::endl;
             std::cout << "Short URL: " << response.short_url() << std::endl;
         } else {
-            std::cout << "RPC Failed" << std::endl;
+            std::cout << status.error_message() << std::endl;
             return; //rpc failed
         }
     }
@@ -47,7 +55,7 @@ public:
             std::cout << "URL: " << response.url() << std::endl;
             std::cout << "Result URL: " << response.result_url() << std::endl;
         } else {
-            std::cout << "RPC Failed" << std::endl;
+            std::cout << status.error_message() << std::endl;
             return; //rpc failed
         }
     }
@@ -72,7 +80,7 @@ int main(int argc, char** argv) {
     data = argv[2];
 
     // create a client and call the service
-    Client client(grpc::CreateChannel("localhost:50051", grpc::InsecureChannelCredentials()));
+    Client client(grpc::CreateChannel("localhost:50053", grpc::InsecureChannelCredentials()));
 
     if(operation == "write") {
         client.Write(data);

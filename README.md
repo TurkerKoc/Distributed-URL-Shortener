@@ -1,3 +1,9 @@
+# grpc call through terminal
+``` bash
+grpcurl call localhost:50051 ClientService.Write -d '{ "long_url": "www.google.com" }'
+grpcurl -plaintext -d '{ "long_url": "www.google.com" }' localhost:50051 ClientService/Write
+```
+
 Prerequisite
 
 ``` bash
@@ -5,6 +11,7 @@ touch $HOME/.bash_profile
 echo "export PROTOC_INSTALL_DIR=$HOME/.local" >> $HOME/.bash_profile
 echo "export gRPC_CPP_PLUGIN_EXECUTABLE=$PROTOC_INSTALL_DIR/bin/grpc_cpp_plugin" >> $HOME/.bash_profile
 echo "export PATH="$PROTOC_INSTALL_DIR/bin:$PATH"" >> $HOME/.bash_profile
+/Users/turkerkoc
 ```
 
 
