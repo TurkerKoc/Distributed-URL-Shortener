@@ -120,6 +120,8 @@ private:
 
     std::string generateShortUrl(const std::string longUrl);
 
+    void eraseRedundantLog(int prefixLen);
+
 public:
     RaftNode(std::string id, std::vector <std::string> nodes_info);
 
@@ -225,10 +227,9 @@ void RaftNode::replicateLog(std::string leaderId, std::string followerId) {
         p1->set_second(p.second);
     }
 
-    req.set_leader_commit(commitLength); //TODO check this is not used
+    req.set_leader_commit(commitLength);
 
     AddLogResponse res;
-//    int nodeIndex = getNodeIndex(followerId);
     //leader receiving acks
     if (!((nodes[followerId]->AddLog(&context, req, &res)).ok())) {
         std::cout << "grpc error" << std::endl;
@@ -318,7 +319,6 @@ void RaftNode::startElection() {
     req.set_candidate_log_term(lastTerm);
 
     last_election_time = time(nullptr); //starting election timer
-    //TODO: observe election timeout behaviour whether code waits in ok()?
 
     std::cout << "Starting eleection for " << std::endl;
     // Send RequestVote RPCs to all other nodes
@@ -356,12 +356,6 @@ void RaftNode::startElection() {
 }
 
 
-
-
-//TODO add grpc method to receive write request and replicate log again on leader
-
-
-
 //periodic check for each node
 void RaftNode::updateState() {
     std::cout << "Current State of " << this->id << ": " << NodeStateStr[this->currentRole] << std::endl;
@@ -370,7 +364,7 @@ void RaftNode::updateState() {
             startElection();
         }
     } else if (currentRole == CANDIDATE) {
-        if (isElectionTimout()) { //TODO: implement election state
+        if (isElectionTimout()) {
             startElection();
         }
     } else if (currentRole == LEADER) {
@@ -383,13 +377,26 @@ void RaftNode::updateState() {
     std::cout << "Current State of " << this->id << ": " << NodeStateStr[this->currentRole] << std::endl;
 }
 
+
+void RaftNode::eraseRedundantLog(int prefixLen) {
+    for(int i = prefixLen - 1 ; i < (int)(log.size()) ; i++) {
+        //Parsing on ','
+        std::size_t commaIndex = (log[(unsigned long)i].first).find(','); //index of comma
+        std::string longUrl = (log[(unsigned long)i].first).substr(0,commaIndex);
+        std::string shortUrl = (log[(unsigned long)i].first).substr(commaIndex+1);
+
+        urlMap.erase(longUrl);
+        urlMap.erase(shortUrl);
+    }
+}
+
 //updating followers logs
 void RaftNode::appendEntries(int prefixLen, int leaderCommit, std::vector<pair> suffix) {
     std::cout << "appendEntries start" << std::endl;
     if ((int)(suffix.size()) > 0 && (int)((this->log).size()) > prefixLen) { //you may have some redundant log from prev leader, delete them
         int index = std::min((int)((this->log).size()), prefixLen + (int)(suffix.size())) - 1;
         if (log[(unsigned long)index].second != suffix[(unsigned long)(index - prefixLen)].second()) {
-            //TODO delete data from urlMap as well.
+            eraseRedundantLog(prefixLen);
             log = {log.begin(), log.begin() + prefixLen - 1}; //truncate log to prefix
         } //truncated and cutted of inconsistent logs
     }
@@ -397,7 +404,6 @@ void RaftNode::appendEntries(int prefixLen, int leaderCommit, std::vector<pair> 
     if (prefixLen + (int)(suffix.size()) > (int)(log.size())) {
         //add all suffix to log from back
         for(auto &p: suffix) {
-            //TODO add urlMap too
             log.push_back({p.first(), p.second()});
             std::string urlMapping = p.first(); //longUrl,shortUrl
             //Parsing on ','

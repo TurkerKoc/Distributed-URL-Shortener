@@ -5,10 +5,10 @@
 // eger herhangi bir istekte hata alirsak diger nodea istek aticaz
 
 
-//Raft icinde redundant logu silme isleminde urlMap ten silmen lazim -> TODO su var
+//+   Raft icinde redundant logu silme isleminde urlMap ten silmen lazim
+// 5) deliver message to application yazilacak (disk) yapilacak -> SQLITE
 
-
-// 5) deliver message to application yazilacak (disk) yapilacak
+//Load balancer icinde read/write quorum saglamasini yap
 
 #include <raft.grpc.pb.h>
 #include <iostream>

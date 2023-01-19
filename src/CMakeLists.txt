@@ -49,6 +49,12 @@ add_executable(client
 target_link_libraries(client
         PRIVATE
         myproto)
+add_executable(loadBalancer
+        loadBalancer.cpp
+        )
+target_link_libraries(loadBalancer
+        PRIVATE
+        myproto)
 #[[
 add_executable(worker
         worker.cpp
