@@ -1,5 +1,8 @@
 #include <sqlite3.h>
 
+#define NULL 0
+
+
 int main() {
     sqlite3 *db;
     sqlite3_stmt *stmt;
