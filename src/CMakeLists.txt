@@ -20,14 +20,6 @@ source_group(TREE ${CMAKE_CURRENT_SOURCE_DIR} FILES ${SOURCES})
 # Target
 #
 
-#[[
-add_executable(main ${SOURCES})
-target_link_libraries(main
-        PRIVATE
-        myproto
-        )]]
-#find_package(CURL REQUIRED)
-
 add_executable(main
         main.cpp
         )
@@ -35,10 +27,10 @@ target_link_libraries(main
         PRIVATE
         myproto)
 
-add_executable(raftExample
-        RaftExample_gRPC_withoutThread.cpp
+add_executable(raft
+        raft.cpp
         )
-target_link_libraries(raftExample
+target_link_libraries(raft
         PRIVATE
         myproto
         ${OPENSSL_LIBRARIES})
@@ -49,15 +41,10 @@ add_executable(client
 target_link_libraries(client
         PRIVATE
         myproto)
+
 add_executable(loadBalancer
         loadBalancer.cpp
         )
 target_link_libraries(loadBalancer
         PRIVATE
         myproto)
-#[[
-add_executable(worker
-        worker.cpp
-        CurlEasyPtr.cpp
-        AzureBlobClient.cpp AzureBlobClient.h)
-target_link_libraries(worker PUBLIC CURL::libcurl azure-storage-lite)]]
