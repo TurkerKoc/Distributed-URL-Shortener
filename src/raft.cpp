@@ -1,5 +1,9 @@
 /*
- * 5) deliver message to application yazilacak (disk)
+ * 1) Dockerize application
+ * 2) write tests
+ * 3) Create pipelines to run tests
+ * 4) Azure if you can
+ * 5) report
  *
  */
 #include <iostream>
