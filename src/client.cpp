@@ -1,15 +1,3 @@
-// read, write methodunu grpc yazicaz
-// mainde RaftNode objelerini olusturup thread olarak bunlari calistiricaz
-// sonra grpc dinlemeye baslicak ve ne zaman bir istek gelse sirasiyla nodelara yonlendiricez
-// + write request RafNodeda hali hazirda leadera forward olacagi icin lider bilgisini buranin tutmasina gerek yok
-// eger herhangi bir istekte hata alirsak diger nodea istek aticaz
-
-
-//+   Raft icinde redundant logu silme isleminde urlMap ten silmen lazim
-// 5) deliver message to application yazilacak (disk) yapilacak -> SQLITE
-
-//Load balancer icinde read/write quorum saglamasini yap
-
 #include <raft.grpc.pb.h>
 #include <iostream>
 #include <string>
@@ -70,21 +58,16 @@ private:
 
 int main(int argc, char** argv) {
     // parse command-line arguments using gflags or boost program_options
-    std::string operation;
-    std::string data;
-//    gflags::ParseCommandLineFlags(&argc, &argv, true);
-//    gflags::SetUsageMessage("CLI for your gRPC service.");
-//    gflags::ParseCommandLineNonHelpFlags(&argc, &argv, true);
-//    gflags::HandleCommandLineHelpFlags();
+    std::string operation; //read/write
+    std::string data; //url/short_url
     if (argc < 3) {
-//        gflags::ShowUsageWithFlagsRestrict(argv[0], "ClientService");
         return 1;
     }
     operation = argv[1];
     data = argv[2];
 
     // create a client and call the service
-    Client client(grpc::CreateChannel("localhost:50053", grpc::InsecureChannelCredentials()));
+    Client client(grpc::CreateChannel("localhost:50050", grpc::InsecureChannelCredentials())); //connect to load balancer
 
     if(operation == "write") {
         client.Write(data);

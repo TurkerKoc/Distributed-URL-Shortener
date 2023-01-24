@@ -1,15 +1,5 @@
-// read, write methodunu grpc yazicaz
-// mainde RaftNode objelerini olusturup thread olarak bunlari calistiricaz
-// sonra grpc dinlemeye baslicak ve ne zaman bir istek gelse sirasiyla nodelara yonlendiricez
-// + write request RafNodeda hali hazirda leadera forward olacagi icin lider bilgisini buranin tutmasina gerek yok
-// eger herhangi bir istekte hata alirsak diger nodea istek aticaz
-
-
-//+   Raft icinde redundant logu silme isleminde urlMap ten silmen lazim
+// loadBalancer mainde RaftNode objelerini olusturup thread olarak bunlari calistiricaz
 // 5) deliver message to application yazilacak (disk) yapilacak -> SQLITE
-
-//Load balancer icinde read/write quorum saglamasini yap
-
 
 /*
  * - We assume that load balancer will not fail
@@ -28,6 +18,7 @@
 #include <string>
 #include <vector>
 #include <grpcpp/grpcpp.h>
+#include <cmath>
 
 #define UNUSED(expr) do { (void)(expr); } while (0)
 
@@ -49,11 +40,9 @@ class LoadBalancer : public ClientService::Service {
 private:
     std::string id; // ip:port
     std::unique_ptr <Server> server;
-    // TODO check here
-    //  I changed here to vector for better random access (with index)
     std::vector<std::unique_ptr<ClientService::Stub>> nodesClientService; //id: localhost:1234, Stub: to make a gRPC Call on Write and Read
-    int readOrder;
-    int writeOrder;
+    int readOrder; //in each request call another node sequentially. (round robin)
+    int writeOrder; //same as write (each node forwards request to the leader) (round robin)
 public:
     LoadBalancer(std::string id, std::vector <std::string> nodes_info);
 
@@ -74,8 +63,9 @@ LoadBalancer::LoadBalancer(std::string id, std::vector <std::string> nodes_info)
     this->readOrder = 0;
     this->writeOrder = 0;
 
+    //creating nodes and adding to the vector
     for (auto &curId: nodes_info) {
-        if(curId == this->id) continue;
+        if(curId == this->id) continue; //skip load balancer
 
         auto channel = grpc::CreateChannel(curId, grpc::InsecureChannelCredentials());
         auto stubClientService = ClientService::NewStub(channel);
@@ -93,30 +83,34 @@ Status LoadBalancer::Write(ServerContext *context, const WriteRequest *req, Writ
 
     std::string longUrl = req->long_url();
 
+    //creating new write request to send respective node
     WriteRequest requestToNode;
     requestToNode.set_long_url(longUrl);
 
+    //try each node until a successful operation or all nodes have been requested.
     for(int i = 0; i < (int)(nodesClientService.size()); i++) {
+        std::cout << "Write request to node " << writeOrder << " with url: " << longUrl << std::endl;
         WriteResponse responseFromNode;
         ClientContext clientContext;
-        Status status = (nodesClientService[(unsigned long)writeOrder])->Write(&clientContext, requestToNode, &responseFromNode);
+        Status status = (nodesClientService[(unsigned long)writeOrder])->Write(&clientContext, requestToNode, &responseFromNode); //sending request to node with writeorder index
 
         //update node index
-        writeOrder++;
+        writeOrder++; //increment to send new request to another node
         writeOrder = writeOrder % ((int)(nodesClientService.size()));
 
-        if (status.ok()) {
+        if (status.ok()) { //success
             res->set_long_url(responseFromNode.long_url());
             res->set_short_url(responseFromNode.short_url());
-            return Status::OK;
-        } else if(status.error_code() == grpc::StatusCode::NOT_FOUND){
-            // TODO fix all the status codes and implement here in a good way
-            //  - there might be a error from the leader
-            //      ---> in that case we should return the result to client
-            //  - the node may not know the leader
-            //      ---> in that case we should send write request to an another node
-            return grpc::Status(grpc::StatusCode::NOT_FOUND, "Leader error!");
+            return Status::OK; //return to the client
         }
+//        else if(status.error_code() == grpc::StatusCode::NOT_FOUND){ //unsuccessful
+//            // TODO fix all the status codes and implement here in a good way
+//            //  - there might be a error from the leader
+//            //      ---> in that case we should return the result to client
+//            //  - the node may not know the leader
+//            //      ---> in that case we should send write request to an another node
+//            return grpc::Status(grpc::StatusCode::NOT_FOUND, "error from current node!");
+//        }
 //        else {
 //            // another error code
 //            // probably node connection error
@@ -126,7 +120,7 @@ Status LoadBalancer::Write(ServerContext *context, const WriteRequest *req, Writ
 //        }
     }
 
-    return grpc::Status(grpc::StatusCode::NOT_FOUND, "URL Not Found!");
+    return grpc::Status(grpc::StatusCode::NOT_FOUND, "Error! Can't write"); //client need to try again
 }
 
 Status LoadBalancer::Read(ServerContext *context, const ReadRequest *req, ReadResponse *res) {
@@ -138,10 +132,11 @@ Status LoadBalancer::Read(ServerContext *context, const ReadRequest *req, ReadRe
     requestToNode.set_url(url);
 
     //TODO cpp integer division round to upper int
-    int readQuorum = ((int)(nodesClientService.size())) / 2;
+    int readQuorum = (int)std::ceil(((int)(nodesClientService.size())) / (double)2); //division round up to get quorum
 
 
     for(int i = 0; i < readQuorum; i++) {
+        std::cout << "Read request to node " << readOrder << " with url: " << url << " with read quorum: " << readQuorum << std::endl;
         ReadResponse responseFromNode;
         ClientContext clientContext;
         Status status = (nodesClientService[(unsigned long)readOrder])->Read(&clientContext, requestToNode, &responseFromNode);
@@ -170,13 +165,13 @@ Status LoadBalancer::Read(ServerContext *context, const ReadRequest *req, ReadRe
 
     }
 
-    return grpc::Status(grpc::StatusCode::NOT_FOUND, "URL Not Found!");
+    return grpc::Status(grpc::StatusCode::NOT_FOUND, "Error! URL not found!");
 }
 
 
 void LoadBalancer::start() {
     std::cout << "Server listening on " << this->id << std::endl;
-    server->Wait();
+    server->Wait(); //waiting grpc calls from clients
 }
 
 void LoadBalancer::stop() {
@@ -186,7 +181,7 @@ void LoadBalancer::stop() {
 int main() {
     std::vector<std::string> nodes_info = {
             "127.0.0.1:50050", // load balancer ip:port
-            "127.0.0.1:50051",
+            "127.0.0.1:50051", // ip port of other nodes
             "127.0.0.1:50052",
             "127.0.0.1:50053",
             "127.0.0.1:50054"
