@@ -16,6 +16,7 @@
 #include <openssl/evp.h>
 #include <chrono>
 #include <iomanip>
+#include <sqlite3.h>
 
 #define PERIODIC_CHECK_SECONDS 5
 #define UNUSED(expr) do { (void)(expr); } while (0)
@@ -63,7 +64,11 @@ private:
     time_t last_election_time;
     double election_timout;
     double heartbeat_timout;
+    std::atomic<bool> stopThread{false}; //boolean variable to kill thread
     std::unique_ptr<std::thread> periodicCheckThread; //thread that check state for each node periodically
+    //SQLite variables
+    sqlite3 *db;
+    sqlite3_stmt *stmt;
 
     std::unordered_map <std::string, std::string> urlMap; //short->long or long->short
     std::vector <std::pair<std::string, int>> log; //{{msg, termNum}, ...} -> msg = long url
@@ -91,6 +96,11 @@ private:
 
     void appendEntries(int prefixLen, int leaderCommit, std::vector<pair> suffix);
 
+    void sqliteInitialization();
+
+    void insertDataToDB(int term, std::string key, std::string value);
+
+    void fillLogAndMapFromDB(); //for recovery of node
     //GRPC'S
     // Service implementation for the AddLog RPC
     Status AddLog(ServerContext *context, const AddLogRequest *req, AddLogResponse *res) override;
@@ -126,6 +136,89 @@ public:
     void stop();
 };
 
+void RaftNode::fillLogAndMapFromDB() {
+    // read data from table and save in vector
+    std::string select_query = "SELECT key, value, term FROM logs ORDER BY id;";
+    int rc = sqlite3_prepare_v2(db, select_query.c_str(), -1, &stmt, nullptr);
+    if (rc != SQLITE_OK) {
+        std::cerr << "Error preparing select statement: " << sqlite3_errmsg(db) << std::endl;
+        sqlite3_finalize(stmt);
+        sqlite3_close(db);
+        stop();
+    }
+    int count = 0;
+    while (sqlite3_step(stmt) == SQLITE_ROW) {
+        std::pair<std::string, int> p;
+        int curTerm = sqlite3_column_int(stmt, 2);
+        std::string longUrl = std::string(reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0)));
+        std::string shortUrl = std::string(reinterpret_cast<const char*>(sqlite3_column_text(stmt, 1)));
+        std::string logData = longUrl + "," + shortUrl;
+        log.push_back({logData, curTerm});
+        urlMap[longUrl] = shortUrl;
+        urlMap[shortUrl] = longUrl;
+        count++;
+        this->currentTerm = curTerm;
+    }
+
+    this->commitLength = count;
+
+    sqlite3_finalize(stmt);
+}
+
+void RaftNode::sqliteInitialization() {
+    int rc;
+
+    std::string dbName = "raft_" + id + ".db"; //e.g: raft_localhost:50001.db
+    // Open or create the SQLite database
+    rc = sqlite3_open(dbName.c_str(), &db);
+    //creating database
+    if (rc != SQLITE_OK) {
+        std::cerr << "Error opening/creating db: " << sqlite3_errmsg(db) << std::endl;
+        sqlite3_finalize(stmt);
+        sqlite3_close(db);
+        stop();
+    }
+
+    // Create the table to store logs
+    const char *sql = "CREATE TABLE IF NOT EXISTS logs (id INTEGER PRIMARY KEY, term INTEGER, key TEXT, value TEXT);";
+    rc = sqlite3_exec(db, sql, NULL, 0, NULL);
+    if (rc != SQLITE_OK) {
+        std::cerr << "Error creating table: " << sqlite3_errmsg(db) << std::endl;
+        sqlite3_finalize(stmt);
+        sqlite3_close(db);
+        stop();
+    }
+}
+
+void RaftNode::insertDataToDB(int term, std::string key, std::string value) { //term, longUrl, shortUrl
+
+    // Insert a new log
+    const char *sql = "INSERT INTO logs (term, key, value) VALUES (?, ?, ?);";
+    int rc = sqlite3_prepare_v2(db, sql, -1, &stmt, NULL);
+    if (rc != SQLITE_OK) {
+        std::cerr << "Error inserting to table: " << sqlite3_errmsg(db) << std::endl;
+        sqlite3_finalize(stmt);
+        sqlite3_close(db);
+        stop(); //kill the program
+    }
+
+    // Bind the values to the statement
+    sqlite3_bind_int(stmt, 1, term); // term
+    sqlite3_bind_text(stmt, 2, key.c_str(), -1, SQLITE_STATIC); // key
+    sqlite3_bind_text(stmt, 3, value.c_str(), -1, SQLITE_STATIC); // value
+
+    // Execute the statement
+    rc = sqlite3_step(stmt);
+    if (rc != SQLITE_DONE) {
+        std::cerr << "Error executing query: " << sqlite3_errmsg(db) << std::endl;
+        sqlite3_finalize(stmt);
+        sqlite3_close(db);
+        stop(); //kill the program
+    }
+
+    sqlite3_finalize(stmt);
+}
+
 RaftNode::RaftNode(std::string id, std::vector <std::string> nodes_info) {
     this->currentTerm = 0;
     this->votedFor = "";
@@ -133,6 +226,9 @@ RaftNode::RaftNode(std::string id, std::vector <std::string> nodes_info) {
     this->currentRole = FOLLOWER;
     this->currentLeader = "";
     this->id = id;
+
+    sqliteInitialization(); //open/create db
+    fillLogAndMapFromDB();
 
     election_timout = getRandomDouble(10.0, 15.0); //election will time out after X seconds.
     heartbeat_timout = 10.0; //heartbeat timout to check leader unresponsive
@@ -178,7 +274,7 @@ bool RaftNode::isLeaderUnresponsive() {
 }
 
 void RaftNode::periodicCheck() {
-    while (true) {
+    while (!stopThread) { //if it's true stop the thread
         // Check if the leader is still responsive
         updateState();
         std::this_thread::sleep_for(std::chrono::seconds(PERIODIC_CHECK_SECONDS));
@@ -194,7 +290,12 @@ void RaftNode::start() {
 }
 
 void RaftNode::stop() {
+    sqlite3_finalize(stmt);    // Close the statement
+    sqlite3_close(db);    // Close the database
     server->Shutdown();
+    stopThread = true; //to kill thread
+    periodicCheckThread->join(); // Wait for thread to finish
+    std::exit(0); //kill main process
 }
 
 void RaftNode::replicateLog(std::string leaderId, std::string followerId) {
@@ -221,7 +322,7 @@ void RaftNode::replicateLog(std::string leaderId, std::string followerId) {
         p1->set_second(p.second);
     }
 
-    req.set_leader_commit(commitLength);
+    req.set_commit_length(commitLength);
 
     AddLogResponse res;
     //leader receiving acks
@@ -278,15 +379,22 @@ void RaftNode::commitLogEntries() {
 
 
 
-    std::cout << "Log size: " << log.size() << std::endl;
-    std::cout << "Ready var: " << ready << std::endl;
+//    std::cout << "Log size: " << log.size() << std::endl;
+//    std::cout << "Ready var: " << ready << std::endl;
     if(ready != 0)
-        std::cout << "Ready var in log: " << (log[(unsigned long)(ready - 1)].second) << std::endl;
-    std::cout << "if condition: " << (ready != 0 && ready > commitLength && log[(unsigned long)(ready - 1)].second == currentTerm) << std::endl;
+//        std::cout << "Ready var in log: " << (log[(unsigned long)(ready - 1)].second) << std::endl;
+//    std::cout << "if condition: " << (ready != 0 && ready > commitLength && log[(unsigned long)(ready - 1)].second == currentTerm) << std::endl;
     if (ready != 0 && ready > commitLength && log[(unsigned long)(ready - 1)].second == currentTerm) {
-//        for(int i = commitLength; i < ready; i++) {
-//            //TODO deliver log[i].first (msg) to application
-//        }
+        for(int i = commitLength; i < ready; i++) {
+            //deliver log[i].first (msg) to application
+
+            std::string urlMapping = log[(unsigned long)i].first; //longUrl,shortUrl
+            //Parsing on ','
+            std::size_t index = urlMapping.find(','); //index of comma
+            std::string longUrl = urlMapping.substr(0,index);
+            std::string shortUrl = urlMapping.substr(index+1);
+            insertDataToDB(log[(unsigned long)i].second, longUrl, shortUrl); //insert into db
+        }
         commitLength = ready;
     }
 }
@@ -411,11 +519,19 @@ void RaftNode::appendEntries(int prefixLen, int leaderCommit, std::vector<pair> 
             urlMap[shortUrl] = longUrl;
         }
     }
-
+    std::cout << "Leader commit: "<< leaderCommit << " commitLength: " << commitLength << std::endl;
     if (leaderCommit > commitLength) {
-//            for(int i = commitLength; i < leaderCommit; i++) {
-//                //TODO commit log[i].first (msg) to disk (client)
-//            }
+        std::cout << "condition ok committing" << std::endl;
+        for(int i = commitLength; i < leaderCommit; i++) {
+            //commit log[i].first (msg) to disk (client)
+
+            std::string urlMapping = log[(unsigned long)i].first; //longUrl,shortUrl
+            //Parsing on ','
+            std::size_t index = urlMapping.find(','); //index of comma
+            std::string longUrl = urlMapping.substr(0,index);
+            std::string shortUrl = urlMapping.substr(index+1);
+            insertDataToDB(log[(unsigned long)i].second, longUrl, shortUrl); //insert into db
+        }
         commitLength = leaderCommit;
     }
 }
@@ -606,6 +722,7 @@ Status RaftNode::Read(ServerContext *context, const ReadRequest *req, ReadRespon
 
 
 int main(int argc, char** argv) {
+
     if (argc < 2) {
         return 1;
     }
@@ -619,7 +736,7 @@ int main(int argc, char** argv) {
 
 
     RaftNode node(nodes_info[(unsigned long)index], nodes_info);
-//    RaftNode node2(nodes_info[2], nodes_info);
+
 
     // Start the Raft node
     node.start();

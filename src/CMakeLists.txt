@@ -31,6 +31,7 @@ add_executable(raft
 target_link_libraries(raft
         PRIVATE
         myproto
+        sqlite3
         ${OPENSSL_LIBRARIES})
 
 # client
@@ -49,11 +50,3 @@ target_link_libraries(loadBalancer
         PRIVATE
         myproto)
 
-# sqlite test
-add_executable(SQLiteExample
-        SQLiteExample.cpp
-        )
-target_link_libraries(SQLiteExample
-        PRIVATE
-        myproto
-        sqlite3)
