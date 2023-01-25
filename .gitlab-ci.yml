@@ -5,7 +5,8 @@ stages:
 make:
   stage: build
   script:
-    - sudo ./build.sh
+    - chmod +x build.sh
+    - ./build.sh
   artifacts:
     paths:
       - cmake-build-debug/src/loadBalancer
