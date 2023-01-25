@@ -2,6 +2,21 @@ stages:
   - build
   - deploy
 
+make:
+  stage: build
+  script:
+    - mkdir -p cmake-build-debug
+    - cd cmake-build-debug
+    - cmake ..
+    - make
+  artifacts:
+    paths:
+      - cmake-build-debug/src/loadBalancer
+      - cmake-build-debug/src/raft
+      - cmake-build-debug/src/client
+    expire_in: 1 hrs
+
+
 checkName:
   stage: build
   script: 
