@@ -1,7 +1,44 @@
-# grpc call through terminal
+# build locally
+
 ``` bash
-grpcurl call localhost:50051 ClientService.Write -d '{ "long_url": "www.google.com" }'
-grpcurl -plaintext -d '{ "long_url": "www.google.com" }' localhost:50051 ClientService/Write
+source $HOME/.bash_profile
+mkdir -p cmake-build-debug
+cd cmake-build-debug
+cmake -DOPENSSL_ROOT_DIR=/opt/homebrew/opt/openssl@3 ..
+make
+```
+
+# docker build & run
+``` bash
+## Create Network
+
+docker network create --subnet=172.32.0.0/16 raft_network
+
+
+##    Build
+
+# For Mac (local)
+docker build -t cbdp_raft_lb --target loadBalancer .
+docker build -t cbdp_raft_node --target raft .
+docker build -t cbdp_raft_client --target client .
+
+# For Linux
+docker buildx build --platform linux/amd64 -t cbdp_raft_lb --target loadBalancer .
+docker buildx build --platform linux/amd64 -t cbdp_raft_node --target raft .
+docker buildx build --platform linux/amd64 -t cbdp_raft_client --target client .
+
+
+##    Start Containers
+
+# system components
+docker run -d --network=raft_network --ip 172.32.0.20 --name=loadBalancer cbdp_raft_lb
+docker run -d --network=raft_network --ip 172.32.0.21 --name=raft -e RAFT_NODE_NUMBER='0' cbdp_raft_node
+docker run -d --network=raft_network --ip 172.32.0.22 --name=raft -e RAFT_NODE_NUMBER='1' cbdp_raft_node
+docker run -d --network=raft_network --ip 172.32.0.23 --name=raft -e RAFT_NODE_NUMBER='2' cbdp_raft_node
+docker run -d --network=raft_network --ip 172.32.0.24 --name=raft -e RAFT_NODE_NUMBER='3' cbdp_raft_node
+
+# run client
+docker run -d --network=raft_network --ip 172.32.0.25 --name=client -it cbdp_raft_client /bin/bash
 ```
 
 Prerequisite
@@ -14,14 +51,6 @@ echo "export PATH="$PROTOC_INSTALL_DIR/bin:$PATH"" >> $HOME/.bash_profile
 /Users/turkerkoc
 ```
 
-
-``` bash
-source $HOME/.bash_profile
-mkdir -p cmake-build-debug
-cd cmake-build-debug
-cmake -DOPENSSL_ROOT_DIR=/opt/homebrew/opt/openssl@3 ..
-make
-```
 -DgRPC_PROTOBUF_PROVIDER=package -DgRPC_PROTOBUF_PACKAGE_TYPE=CONFIG -DCMAKE_FIND_PACKAGE_PREFER_CONFIG=TRUE
 
 gRPC_CPP_PLUGIN_EXECUTABLE=/Users/egekocabas/.local/bin/grpc_cpp_plugin
