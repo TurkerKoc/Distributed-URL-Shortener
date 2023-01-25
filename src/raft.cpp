@@ -272,10 +272,10 @@ double RaftNode::getRandomDouble(double fMin, double fMax) {
 }
 
 bool RaftNode::isElectionTimout() {
-   return (time(nullptr) - last_election_time) > election_timout;
+   return (double)(time(nullptr) - last_election_time) > election_timout;
 }
 bool RaftNode::isLeaderUnresponsive() {
-   return (time(nullptr) - last_heartbeat_time) > heartbeat_timout;
+   return (double)(time(nullptr) - last_heartbeat_time) > heartbeat_timout;
 }
 
 void RaftNode::periodicCheck() {
