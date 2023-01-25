@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+apt-get install -y sqlite3 libsqlite3-dev
 
 export MY_INSTALL_DIR=$HOME/.local
 mkdir -p $MY_INSTALL_DIR
