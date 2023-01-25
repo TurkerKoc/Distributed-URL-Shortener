@@ -24,6 +24,7 @@
 #include <iomanip>
 #include <sqlite3.h>
 #include <unistd.h>
+#include <random>
 
 #define PERIODIC_CHECK_SECONDS 5
 #define UNUSED(expr) \
@@ -86,6 +87,10 @@ class RaftNode final : public RaftService::Service, public ClientService::Servic
    std::unique_ptr<Server> server;
    std::unordered_map<std::string, std::unique_ptr<RaftService::Stub>> nodes; //id: localhost:1234, Stub: to make a gRPC Call
    std::unordered_map<std::string, std::unique_ptr<ClientService::Stub>> nodesClientService; //id: localhost:1234, Stub: to make a gRPC Call on Write and Read
+
+   // utils
+   double ELECTION_TIMEOUT_MIN = 10.0;
+   double ELECTION_TIMEOUT_MAX = 25.0;
 
    // Helper function to become a candidate and start a new election
    void startElection();
@@ -233,11 +238,17 @@ RaftNode::RaftNode(std::string id, std::vector<std::string> nodes_info) {
    this->currentRole = FOLLOWER;
    this->currentLeader = "";
    this->id = id;
+   this->last_heartbeat_time = time(nullptr);
+   this->last_election_time = time(nullptr);
 
    sqliteInitialization(); //open/create db
    fillLogAndMapFromDB();
 
-   election_timout = getRandomDouble(10.0, 15.0); //election will time out after X seconds.
+   std::random_device rd;
+   std::mt19937 gen(rd());
+   std::uniform_real_distribution<> dis(this->ELECTION_TIMEOUT_MIN, this->ELECTION_TIMEOUT_MAX);
+   this->election_timout = dis(gen); //election will time out after X seconds.
+   std::cout << "election t:" << election_timout << std::endl;
    heartbeat_timout = 10.0; //heartbeat timout to check leader unresponsive
 
    for (auto& curId : nodes_info) {
@@ -272,10 +283,10 @@ double RaftNode::getRandomDouble(double fMin, double fMax) {
 }
 
 bool RaftNode::isElectionTimout() {
-   return (double)(time(nullptr) - last_election_time) > election_timout;
+   return difftime(time(nullptr),last_election_time) > election_timout;
 }
 bool RaftNode::isLeaderUnresponsive() {
-   return (double)(time(nullptr) - last_heartbeat_time) > heartbeat_timout;
+   return difftime(time(nullptr),last_heartbeat_time) > heartbeat_timout;
 }
 
 void RaftNode::periodicCheck() {
@@ -706,11 +717,18 @@ int main(int argc, char** argv) {
       return 1;
    }
    int index = std::stoi(argv[1]);
-   std::vector<std::string> nodes_info = {
-      "127.0.0.1:50051",
-      "127.0.0.1:50052",
-      "127.0.0.1:50053",
-      "127.0.0.1:50054"};
+      std::vector<std::string> nodes_info = {
+      "172.32.0.21:50051", // ip port of other nodes
+      "172.32.0.22:50052",
+      "172.32.0.23:50053",
+      "172.32.0.24:50054"};
+
+
+//      std::vector<std::string> nodes_info = {
+//     "127.0.0.1:50051",
+//     "127.0.0.1:50052",
+//     "127.0.0.1:50053",
+//     "127.0.0.1:50054"};
 
    RaftNode node(nodes_info[(unsigned long) index], nodes_info);
 

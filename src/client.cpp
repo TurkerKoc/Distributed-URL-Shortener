@@ -67,7 +67,9 @@ int main(int argc, char** argv) {
    data = argv[2];
 
    // create a client and call the service
-   Client client(grpc::CreateChannel("localhost:50050", grpc::InsecureChannelCredentials())); //connect to load balancer
+   //Client client(grpc::CreateChannel("localhost:50050", grpc::InsecureChannelCredentials())); //connect to load balancer
+   Client client(grpc::CreateChannel("172.32.0.20:50050", grpc::InsecureChannelCredentials())); //connect to load balancer
+
 
    if (operation == "write") {
       client.Write(data);

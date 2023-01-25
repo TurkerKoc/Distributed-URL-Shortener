@@ -28,17 +28,37 @@ docker buildx build --platform linux/amd64 -t cbdp_raft_node --target raft .
 docker buildx build --platform linux/amd64 -t cbdp_raft_client --target client .
 
 
+## Create Volumes
+
+
+docker volume create cbdp-volume-0
+docker volume create cbdp-volume-1
+docker volume create cbdp-volume-2
+docker volume create cbdp-volume-3
+
+
 ##    Start Containers
 
 # system components
 docker run -d --network=raft_network --ip 172.32.0.20 --name=loadBalancer cbdp_raft_lb
-docker run -d --network=raft_network --ip 172.32.0.21 --name=raft -e RAFT_NODE_NUMBER='0' cbdp_raft_node
-docker run -d --network=raft_network --ip 172.32.0.22 --name=raft -e RAFT_NODE_NUMBER='1' cbdp_raft_node
-docker run -d --network=raft_network --ip 172.32.0.23 --name=raft -e RAFT_NODE_NUMBER='2' cbdp_raft_node
-docker run -d --network=raft_network --ip 172.32.0.24 --name=raft -e RAFT_NODE_NUMBER='3' cbdp_raft_node
+docker run -d --network=raft_network --ip 172.32.0.21 --mount source=cbdp-volume-0,target=/cbdp/cbdp --name=raft-0 -e RAFT_NODE_NUMBER='0' cbdp_raft_node
+docker run -d --network=raft_network --ip 172.32.0.22 --name=raft-1 -e RAFT_NODE_NUMBER='1' cbdp_raft_node
+docker run -d --network=raft_network --ip 172.32.0.23 --name=raft-2 -e RAFT_NODE_NUMBER='2' cbdp_raft_node
+docker run -d --network=raft_network --ip 172.32.0.24 --name=raft-3 -e RAFT_NODE_NUMBER='3' cbdp_raft_node
+
+
+# -v --> volume mount
+# -v <local folder path>:<container folder path>
+# Initializa
+docker run -d --network=raft_network --ip 172.32.0.21 -v /Users/egekocabas/Desktop/data/data-0:/data --name=raft-0 -e RAFT_NODE_NUMBER='0' cbdp_raft_node
+docker run -d --network=raft_network --ip 172.32.0.22 -v /Users/egekocabas/Desktop/data/data-1:/data --name=raft-1 -e RAFT_NODE_NUMBER='1' cbdp_raft_node
+docker run -d --network=raft_network --ip 172.32.0.23 -v /Users/egekocabas/Desktop/data/data-2:/data --name=raft-2 -e RAFT_NODE_NUMBER='2' cbdp_raft_node
+docker run -d --network=raft_network --ip 172.32.0.24 -v /Users/egekocabas/Desktop/data/data-3:/data --name=raft-3 -e RAFT_NODE_NUMBER='3' cbdp_raft_node
+
 
 # run client
 docker run -d --network=raft_network --ip 172.32.0.25 --name=client -it cbdp_raft_client /bin/bash
+docker exec -it a70e3e021c87cd09f2447a84a1e5e7ee8fc5ea0c05a1dbd42293fc361d92b539 /bin/bash
 ```
 
 Prerequisite

@@ -175,12 +175,25 @@ void LoadBalancer::stop() {
 }
 
 int main() {
-   std::vector<std::string> nodes_info = {
-      "127.0.0.1:50050", // load balancer ip:port
-      "127.0.0.1:50051", // ip port of other nodes
-      "127.0.0.1:50052",
-      "127.0.0.1:50053",
-      "127.0.0.1:50054"};
+      std::vector<std::string> nodes_info = {
+         "172.32.0.20:50050", // load balancer ip:port
+         "172.32.0.21:50051", // ip port of other nodes
+         "172.32.0.22:50052",
+         "172.32.0.23:50053",
+         "172.32.0.24:50054"};
+      /*
+
+std::vector<std::string> nodes_info = {
+   "127.0.0.1:50050", // load balancer ip:port
+   "127.0.0.1:50051", // ip port of other nodes
+   "127.0.0.1:50052",
+   "127.0.0.1:50053",
+   "127.0.0.1:50054"};
+*/
+
+
+
+
 
    LoadBalancer loadBalancer(nodes_info[(unsigned long) 0], nodes_info);
    loadBalancer.start();

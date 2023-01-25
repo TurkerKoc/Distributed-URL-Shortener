@@ -58,15 +58,15 @@ RUN cd cmake-build-debug && make
 
 FROM base as loadBalancer
 
-WORKDIR cbdp
 COPY --from=base /cbdp/cmake-build-debug/src/loadBalancer .
-CMD exec ./loadBalancer
+WORKDIR /data
+CMD exec /cbdp/loadBalancer
 
 FROM base as raft
 
-WORKDIR cbdp
 COPY --from=base /cbdp/cmake-build-debug/src/raft .
-CMD exec ./raft $RAFT_NODE_NUMBER
+WORKDIR /data
+CMD exec /cbdp/raft $RAFT_NODE_NUMBER
 
 FROM base as client
 
