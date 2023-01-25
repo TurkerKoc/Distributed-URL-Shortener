@@ -1,8 +1,16 @@
 FROM ubuntu:22.10 as base
 
 RUN apt-get update && apt-get install -y cmake g++ libasan6 libcurl4-openssl-dev git libssl-dev pkg-config uuid-dev
+
 WORKDIR cbdp
-COPY . .
+
+# Copy code
+COPY ./protos/* .
+COPY ./src/* .
+COPY ./.clang* .
+COPY ./CMakeLists.txt .
+
+# Build
 RUN mkdir -p cmake-build-debug
 RUN cd cmake-build-debug && cmake ..
 RUN cd cmake-build-debug && make
