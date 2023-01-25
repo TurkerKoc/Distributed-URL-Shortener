@@ -27,7 +27,6 @@ message AddLogRequest {
   int32 prefix_term = 4;
   int32 commit_length = 5;
   repeated pair suffix = 6;
-  int32 leader_commit = 7;
 }
 
 message pair {
