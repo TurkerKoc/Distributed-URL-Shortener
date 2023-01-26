@@ -1,5 +1,6 @@
 stages:
   - build
+  - test
   - deploy
 
 make:
@@ -14,11 +15,18 @@ make:
       - cmake-build-debug/src/client
     expire_in: 1 hrs
 
-
 checkName:
   stage: build
-  script: 
+  script:
     - bash -c '[ -s groupMembers.txt ]'
+
+runCorrectness:
+  stage: test
+  script:
+    - RESULT=$(timeout 120 ./testCorrectness.sh)
+    - RESULT=`echo "${RESULT}" | head -1`
+    - EXPECTED='correct'
+    - bash -c "[ "$RESULT" = "$EXPECTED" ]"
 
 checkReport:
   stage: deploy
