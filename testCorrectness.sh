@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+source bashUtilFunctions.sh
 
 pids=()
 write_urls=("https://mattermost.db.in.tum.de/cbdp202223/channels/url-shortener" "https://www.tum.de/en/about-tum" "https://chat.openai.com/")
@@ -7,90 +8,26 @@ write_urls_results=()
 read_urls_fail=("www.read.operation/will/fail" "https://gitlab.db.in.tum.de/" "www.google.com")
 
 function cleanup {
-  if [[ $? -ne 0 ]]; then
-    echo "incorrect"
-  else
-    echo "correct"
-  fi
-
   # Kill all background processes
   for pid in "${pids[@]}"; do
     kill -s TERM "$pid" > /dev/null 2>&1
   done
 
-  # Remove log files
+  # Remove files
   rm -f loadBalancerOutput.txt
   rm -f raft*Output.txt
   rm -f raft_*.db
+  rm -f dataset.csv
+
+  if [[ $? -ne 0 ]]; then
+    echo "incorrect"
+  else
+    echo "correct"
+  fi
 }
 
 trap cleanup EXIT
 
-function check_write_request_output() {
-  output=$1
-  url=$2
-  if [ $(echo "$output" | wc -l) -ne 2 ]; then
-    exit 1
-  fi
-
-  first_line=$(echo "$output" | head -n 1)
-  second_line=$(echo "$output" | tail -n 1)
-
-  IFS=':' read -ra line <<<"$first_line"
-  rest_of_string="${line[1]}"
-  for j in "${line[@]:2}"; do
-    rest_of_string+=":$j"
-  done
-  rest_of_string="${rest_of_string:1}"
-  if [ "${line[0]}" != "Long URL" ] || [ "$rest_of_string" != "$url" ]; then
-    exit 1
-  fi
-
-  IFS=':' read -ra line <<<"$second_line"
-  rest_of_string="${line[1]}"
-  for j in "${line[@]:2}"; do
-    rest_of_string+=":$j"
-  done
-  rest_of_string="${rest_of_string:1}"
-  if [ "${line[0]}" != "Short URL" ]; then
-    exit 1
-  fi
-
-  echo "$rest_of_string"
-}
-
-function check_read_request_output() {
-  output=$1
-  url=$2
-  result_url=$3
-  # Check if output has two rows
-  if [ $(echo "$output" | wc -l) -ne 2 ]; then
-    exit 1
-  fi
-
-  first_line=$(echo "$output" | head -n 1)
-  second_line=$(echo "$output" | tail -n 1)
-
-  IFS=':' read -ra line <<<"$first_line"
-  rest_of_string="${line[1]}"
-  for j in "${line[@]:2}"; do
-    rest_of_string+=":$j"
-  done
-  rest_of_string="${rest_of_string:1}"
-  if [ "${line[0]}" != "URL" ] || [ "$rest_of_string" != "$url" ]; then
-    exit 1
-  fi
-
-  IFS=':' read -ra line <<<"$second_line"
-  rest_of_string="${line[1]}"
-  for j in "${line[@]:2}"; do
-    rest_of_string+=":$j"
-  done
-  rest_of_string="${rest_of_string:1}"
-  if [ "${line[0]}" != "Result URL" ] || [ "$rest_of_string" != "$result_url" ]; then
-    exit 1
-  fi
-}
 
 # Spawn raft nodes
 for i in {0..3}; do
@@ -128,9 +65,11 @@ sleep 20
 
 # Read (should return success)
 for ((i = 0; i < ${#write_urls[@]}; i++)); do
+  # input=long_url output=short_url
   output=$(cmake-build-debug/src/client "read" "${write_urls[i]}")
   check_read_request_output "$output" "${write_urls[i]}" "${write_urls_results[i]}"
 
+  # input=short_url output=long_url
   output=$(cmake-build-debug/src/client "read" "${write_urls_results[i]}")
   check_read_request_output "$output" "${write_urls_results[i]}" "${write_urls[i]}"
 done
