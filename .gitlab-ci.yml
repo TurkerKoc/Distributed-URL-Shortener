@@ -23,7 +23,9 @@ checkName:
 runCorrectness:
   stage: test
   script:
+    - chmod +x testCorrectness.sh
     - RESULT=$(timeout 120 ./testCorrectness.sh)
+    - echo "$RESULT"
     - RESULT=`echo "${RESULT}" | head -1`
     - EXPECTED='correct'
     - bash -c "[ "$RESULT" = "$EXPECTED" ]"
