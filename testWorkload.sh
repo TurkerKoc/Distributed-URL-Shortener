@@ -10,6 +10,7 @@ function prepare_urls_for_workload() {
   # Download data
   curl --silent -o dataset.csv "$dataset_url"
 
+  counter=0
   # Fill write_urls array
   while read line; do
     if [ $counter -eq 500 ]; then
@@ -61,11 +62,12 @@ pids+=($!)
 
 prepare_urls_for_workload
 
+sleep 25
+
 # Write (should return success)
-for ((i = 0; i < 20; i++)); do
+for url in "${write_urls[@]}"; do
   elapsed_time=$({ time {
-    client_output=$(cmake-build-debug/src/client "write" "${write_urls[i]}")
-    #echo "$client_output"
+    client_output=$(cmake-build-debug/src/client "write" "$url")
     if [ $(echo "$client_output" | wc -l) -ne 2 ]; then
       exit 1
     fi
@@ -78,11 +80,9 @@ echo "write bitt"
 sleep 20
 
 # Read
-for ((i = 0; i < 20; i++)); do
+for url in "${write_urls[@]}"; do
   elapsed_time=$({ time {
-    #cmake-build-debug/src/client "read" "${write_urls[i]}"
-    output=$(cmake-build-debug/src/client "read" "${write_urls[i]}")
-    #echo "$output"
+    output=$(cmake-build-debug/src/client "read" "$url")
     if [ $(echo "$output" | wc -l) -ne 2 ]; then
       exit 1
     fi
