@@ -24,9 +24,19 @@ runCorrectness:
   stage: test
   script:
     - chmod +x testCorrectness.sh
-    - RESULT=$(timeout 120 ./testCorrectness.sh)
+    - RESULT=$(timeout 150 ./testCorrectness.sh)
     - echo "$RESULT"
-    - RESULT=`echo "${RESULT}" | head -1`
+    - RESULT=`echo "${RESULT}" | head -n 1`
+    - EXPECTED='correct'
+    - bash -c "[ "$RESULT" = "$EXPECTED" ]"
+
+runResilience:
+  stage: test
+  script:
+    - chmod +x testResilience.sh
+    - RESULT=$(timeout 150 ./testResilience.sh)
+    - echo "$RESULT"
+    - RESULT=`echo "${RESULT}" | tail -n 1`
     - EXPECTED='correct'
     - bash -c "[ "$RESULT" = "$EXPECTED" ]"
 
