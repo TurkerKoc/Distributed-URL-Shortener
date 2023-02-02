@@ -1,5 +1,6 @@
 stages:
   - build
+  - test
   - deploy
 
 make:
@@ -14,11 +15,37 @@ make:
       - cmake-build-debug/src/client
     expire_in: 1 hrs
 
-
 checkName:
   stage: build
-  script: 
+  script:
     - bash -c '[ -s groupMembers.txt ]'
+
+runCorrectness:
+  stage: test
+  script:
+    - chmod +x testCorrectness.sh
+    - RESULT=$(./testCorrectness.sh)
+    - RESULT=`echo "${RESULT}" | tail -n 1`
+    - EXPECTED='correct'
+    - bash -c "[ "$RESULT" = "$EXPECTED" ]"
+
+runResilience:
+  stage: test
+  script:
+    - chmod +x testResilience.sh
+    - RESULT=$(./testResilience.sh)
+    - RESULT=`echo "${RESULT}" | tail -n 1`
+    - EXPECTED='correct'
+    - bash -c "[ "$RESULT" = "$EXPECTED" ]"
+
+runWorkload:
+  stage: test
+  script:
+    - chmod +x testWorkload.sh
+    - RESULT=$(./testWorkload.sh)
+    - RESULT=`echo "${RESULT}" | tail -n 1`
+    - EXPECTED='correct'
+    - bash -c "[ "$RESULT" = "$EXPECTED" ]"
 
 checkReport:
   stage: deploy

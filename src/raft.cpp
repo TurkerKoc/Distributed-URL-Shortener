@@ -405,7 +405,7 @@ void RaftNode::commitLogEntries() {
 
                 std::string urlMapping = log[(unsigned long) i].first; //longUrl,shortUrl
                 //Parsing on ','
-                std::size_t index = urlMapping.find(','); //index of comma
+                std::size_t index = urlMapping.find_last_of(','); //index of comma
                 std::string longUrl = urlMapping.substr(0, index);
                 std::string shortUrl = urlMapping.substr(index + 1);
                 insertDataToDB(log[(unsigned long) i].second, longUrl, shortUrl); //insert into db
@@ -495,7 +495,7 @@ void RaftNode::updateState() {
 void RaftNode::eraseRedundantLog(int prefixLen) {
     for (int i = prefixLen - 1; i < (int) (log.size()); i++) {
         //Parsing on ','
-        std::size_t commaIndex = (log[(unsigned long) i].first).find(','); //index of comma
+        std::size_t commaIndex = (log[(unsigned long) i].first).find_last_of(','); //index of comma
         std::string longUrl = (log[(unsigned long) i].first).substr(0, commaIndex);
         std::string shortUrl = (log[(unsigned long) i].first).substr(commaIndex + 1);
 
@@ -522,7 +522,7 @@ void RaftNode::appendEntries(int prefixLen, int leaderCommit, std::vector <pair>
             log.push_back({p.first(), p.second()});
             std::string urlMapping = p.first(); //longUrl,shortUrl
             //Parsing on ','
-            std::size_t index = urlMapping.find(','); //index of comma
+            std::size_t index = urlMapping.find_last_of(','); //index of comma
             std::string longUrl = urlMapping.substr(0, index);
             std::string shortUrl = urlMapping.substr(index + 1);
 
@@ -540,7 +540,7 @@ void RaftNode::appendEntries(int prefixLen, int leaderCommit, std::vector <pair>
 
             std::string urlMapping = log[(unsigned long) i].first; //longUrl,shortUrl
             //Parsing on ','
-            std::size_t index = urlMapping.find(','); //index of comma
+            std::size_t index = urlMapping.find_last_of(','); //index of comma
             std::string longUrl = urlMapping.substr(0, index);
             std::string shortUrl = urlMapping.substr(index + 1);
             insertDataToDB(log[(unsigned long) i].second, longUrl, shortUrl); //insert into db
