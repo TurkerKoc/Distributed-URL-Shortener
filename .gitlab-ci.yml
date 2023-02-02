@@ -46,6 +46,10 @@ runWorkload:
     - RESULT=`echo "${RESULT}" | tail -n 1`
     - EXPECTED='correct'
     - bash -c "[ "$RESULT" = "$EXPECTED" ]"
+  artifacts:
+    paths:
+      - ./readTime.txt
+      - ./writeTime.txt
 
 checkReport:
   stage: deploy
